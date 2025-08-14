@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
+use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::process::Command;
-use regex::Regex;
 
 #[derive(Debug, Clone)]
 pub enum PrStatus {
@@ -40,17 +40,9 @@ impl PrStatus {
 }
 
 #[derive(Deserialize)]
-struct PrData {
-    number: u32,
-    state: String,
-    title: String,
-}
-
-#[derive(Deserialize)]
 struct PrDataWithHead {
     number: u32,
     state: String,
-    title: String,
     #[serde(rename = "headRefName")]
     head_ref_name: String,
 }
@@ -62,7 +54,7 @@ impl GitHubIntegration {
     pub fn get_repo_info(remote_url: &str) -> Result<String> {
         // Match GitHub URLs in both formats: git@github.com:owner/repo.git or https://github.com/owner/repo.git
         let re = Regex::new(r"github\.com[:/]([^/]+)/([^/.]+)").unwrap();
-        
+
         if let Some(captures) = re.captures(remote_url) {
             let owner = &captures[1];
             let repo = &captures[2];
@@ -73,9 +65,12 @@ impl GitHubIntegration {
     }
 
     /// Get PR status for multiple branches using batched GitHub CLI calls
-    pub fn get_batch_pr_status(repo_info: &str, branch_names: &[String]) -> Result<HashMap<String, PrStatus>> {
+    pub fn get_batch_pr_status(
+        repo_info: &str,
+        branch_names: &[String],
+    ) -> Result<HashMap<String, PrStatus>> {
         let mut result = HashMap::new();
-        
+
         // Check if GitHub CLI is available
         if !Self::is_gh_cli_available() {
             for branch in branch_names {
@@ -87,10 +82,14 @@ impl GitHubIntegration {
         // Get all PRs for this repo in one call
         let output = Command::new("gh")
             .args([
-                "pr", "list",
-                "--repo", repo_info,
-                "--json", "number,state,title,headRefName",
-                "--limit", "100"
+                "pr",
+                "list",
+                "--repo",
+                repo_info,
+                "--json",
+                "number,state,title,headRefName",
+                "--limit",
+                "100",
             ])
             .output()?;
 
@@ -121,7 +120,7 @@ impl GitHubIntegration {
                     "OPEN" => {
                         let approval_status = approval_statuses.get(&pr.number).cloned();
                         PrStatus::Open(pr.number, approval_status)
-                    },
+                    }
                     "MERGED" => PrStatus::Merged(pr.number),
                     "CLOSED" => PrStatus::Closed(pr.number),
                     _ => PrStatus::Open(pr.number, None),
@@ -135,12 +134,6 @@ impl GitHubIntegration {
         Ok(result)
     }
 
-    /// Get PR status for a single branch (backwards compatibility)
-    pub fn get_pr_status(repo_info: &str, branch_name: &str) -> Result<PrStatus> {
-        let batch_result = Self::get_batch_pr_status(repo_info, &[branch_name.to_string()])?;
-        Ok(batch_result.get(branch_name).unwrap_or(&PrStatus::NoPr).clone())
-    }
-
     fn is_gh_cli_available() -> bool {
         Command::new("gh")
             .args(["--version"])
@@ -151,12 +144,9 @@ impl GitHubIntegration {
 
     fn get_batch_pr_approval_status(repo_info: &str) -> Result<HashMap<u32, String>> {
         let mut result = HashMap::new();
-        
+
         let output = Command::new("gh")
-            .args([
-                "pr", "status",
-                "--repo", repo_info
-            ])
+            .args(["pr", "status", "--repo", repo_info])
             .output()?;
 
         if !output.status.success() {
@@ -164,13 +154,14 @@ impl GitHubIntegration {
         }
 
         let status_str = String::from_utf8_lossy(&output.stdout);
-        
+
         // Parse all PR statuses from the output
         for line in status_str.lines() {
             // Look for PR numbers in lines like "  #123  Some PR title"
             if let Some(pr_start) = line.find('#') {
                 if let Some(pr_end) = line[pr_start + 1..].find(char::is_whitespace) {
-                    if let Ok(pr_number) = line[pr_start + 1..pr_start + 1 + pr_end].parse::<u32>() {
+                    if let Ok(pr_number) = line[pr_start + 1..pr_start + 1 + pr_end].parse::<u32>()
+                    {
                         if line.contains("Approved") {
                             result.insert(pr_number, "Approved".to_string());
                         } else if line.contains("passing") {
@@ -182,10 +173,5 @@ impl GitHubIntegration {
         }
 
         Ok(result)
-    }
-
-    fn get_pr_approval_status(repo_info: &str, pr_number: u32) -> Result<Option<String>> {
-        let batch_result = Self::get_batch_pr_approval_status(repo_info)?;
-        Ok(batch_result.get(&pr_number).cloned())
     }
 }

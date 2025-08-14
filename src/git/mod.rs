@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use std::path::Path;
 use std::process::Command;
 
@@ -75,20 +75,12 @@ impl RemoteStatus {
 
 pub struct GitRepository {
     pub path: String,
-    pub name: String,
 }
 
 impl GitRepository {
     pub fn new(path: &str) -> Self {
-        let name = Path::new(path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-        
         Self {
             path: path.to_string(),
-            name,
         }
     }
 
@@ -158,8 +150,10 @@ impl GitRepository {
         if status_output.trim().is_empty() {
             Ok(LocalStatus::Clean)
         } else if status_output.lines().any(|line| {
-            line.starts_with('A') || line.starts_with('D') || 
-            line.starts_with('R') || line.starts_with('M')
+            line.starts_with('A')
+                || line.starts_with('D')
+                || line.starts_with('R')
+                || line.starts_with('M')
         }) {
             Ok(LocalStatus::Staged)
         } else {
@@ -167,17 +161,18 @@ impl GitRepository {
         }
     }
 
-    pub fn get_remote_status(&self, worktree_path: &str, branch_name: &str) -> Result<RemoteStatus> {
+    pub fn get_remote_status(
+        &self,
+        worktree_path: &str,
+        branch_name: &str,
+    ) -> Result<RemoteStatus> {
         if !Path::new(worktree_path).exists() {
             return Ok(RemoteStatus::NoRemote);
         }
 
         // Get upstream tracking info and ahead/behind counts in one call
         let status_output = Command::new("git")
-            .args([
-                "-C", worktree_path,
-                "status", "--porcelain=v1", "--branch"
-            ])
+            .args(["-C", worktree_path, "status", "--porcelain=v1", "--branch"])
             .output()?;
 
         if !status_output.status.success() {
@@ -193,15 +188,19 @@ impl GitRepository {
         }
 
         let branch_info = &first_line[3..]; // Remove "## "
-        
+
         if !branch_info.contains("...") {
             // No upstream tracking
             // Quick check if branch exists on remote using git ls-remote
             let remote_check = Command::new("git")
                 .args([
-                    "-C", worktree_path,
-                    "ls-remote", "--exit-code", "--heads",
-                    "origin", branch_name
+                    "-C",
+                    worktree_path,
+                    "ls-remote",
+                    "--exit-code",
+                    "--heads",
+                    "origin",
+                    branch_name,
                 ])
                 .output()?;
 
@@ -217,10 +216,10 @@ impl GitRepository {
             let bracket_content = &branch_info[bracket_start + 1..];
             if let Some(bracket_end) = bracket_content.find(']') {
                 let tracking_info = &bracket_content[..bracket_end];
-                
+
                 let mut ahead = 0u32;
                 let mut behind = 0u32;
-                
+
                 for part in tracking_info.split(", ") {
                     if let Some(ahead_str) = part.strip_prefix("ahead ") {
                         ahead = ahead_str.parse().unwrap_or(0);
@@ -228,7 +227,7 @@ impl GitRepository {
                         behind = behind_str.parse().unwrap_or(0);
                     }
                 }
-                
+
                 match (ahead, behind) {
                     (0, 0) => Ok(RemoteStatus::UpToDate),
                     (a, 0) if a > 0 => Ok(RemoteStatus::Ahead(a)),

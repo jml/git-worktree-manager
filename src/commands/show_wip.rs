@@ -1,9 +1,9 @@
 use anyhow::Result;
 use clap::Args;
+use futures::future::try_join_all;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use futures::future::try_join_all;
 
 use crate::git::{GitRepository, LocalStatus, RemoteStatus};
 use crate::github::{GitHubIntegration, PrStatus};
@@ -45,7 +45,7 @@ struct StatusCounters {
     clean: u32,
     dirty: u32,
     staged: u32,
-    
+
     // Remote status counters
     up_to_date: u32,
     ahead: u32,
@@ -53,7 +53,7 @@ struct StatusCounters {
     diverged: u32,
     not_pushed: u32,
     not_tracking: u32,
-    
+
     // PR status counters
     pr_open: u32,
     pr_merged: u32,
@@ -115,10 +115,14 @@ impl ShowWipCommand {
     pub async fn execute(&self) -> Result<()> {
         // Check if we're in the expected directory structure
         let search_path = self.path.as_deref().unwrap_or(".");
-        
+
         if !Path::new(&format!("{}/convert-to-worktree.sh", search_path)).exists() {
-            ColoredOutput::log_header("⚠️  Warning: convert-to-worktree.sh not found in current directory");
-            ColoredOutput::log_header("   This tool is optimized for the chainguard directory structure.");
+            ColoredOutput::log_header(
+                "⚠️  Warning: convert-to-worktree.sh not found in current directory",
+            );
+            ColoredOutput::log_header(
+                "   This tool is optimized for the chainguard directory structure.",
+            );
             println!();
         }
 
@@ -133,10 +137,10 @@ impl ShowWipCommand {
 
         // Find all repositories
         let repo_tasks = self.collect_repositories(search_path).await?;
-        
+
         // Process repositories in parallel
         let repo_task_results = try_join_all(repo_tasks).await?;
-        
+
         // Unwrap the results from the join handles
         let mut repo_results = Vec::new();
         for task_result in repo_task_results {
@@ -204,17 +208,21 @@ impl ShowWipCommand {
     fn display_status_breakdown(&self, counters: &StatusCounters) {
         println!();
         ColoredOutput::log_header("📈 Status Breakdown:");
-        
+
         println!(
             "  Local: ✅ Clean ({}) | 🔧 Dirty ({}) | 📦 Staged ({})",
             counters.clean, counters.dirty, counters.staged
         );
-        
+
         println!(
             "  Remote: ✅ Up to date ({}) | ⬆️ Ahead ({}) | ⬇️ Behind ({}) | 🔀 Diverged ({}) | ❌ Not pushed ({})",
-            counters.up_to_date, counters.ahead, counters.behind, counters.diverged, counters.not_pushed
+            counters.up_to_date,
+            counters.ahead,
+            counters.behind,
+            counters.diverged,
+            counters.not_pushed
         );
-        
+
         println!(
             "  PRs: 📋 Open ({}) | ✅ Merged ({}) | ❌ Closed ({}) | ➖ No PR ({})",
             counters.pr_open, counters.pr_merged, counters.pr_closed, counters.no_pr
@@ -232,34 +240,40 @@ impl ShowWipCommand {
     fn display_action_items(&self, counters: &StatusCounters) {
         println!();
         ColoredOutput::log_header("🎯 Action Items:");
-        
+
         if counters.dirty > 0 || counters.staged > 0 {
             println!(
                 "   • Commit changes in {} dirty + {} staged branches",
                 counters.dirty, counters.staged
             );
         }
-        
+
         if counters.not_pushed > 0 || counters.ahead > 0 {
             println!(
                 "   • Push {} unpushed + {} ahead branches",
                 counters.not_pushed, counters.ahead
             );
         }
-        
+
         if counters.behind > 0 || counters.diverged > 0 {
             println!(
                 "   • Pull/rebase {} behind + {} diverged branches",
                 counters.behind, counters.diverged
             );
         }
-        
+
         if counters.no_pr > 0 {
-            println!("   • Create PRs for {} branches without PRs", counters.no_pr);
+            println!(
+                "   • Create PRs for {} branches without PRs",
+                counters.no_pr
+            );
         }
-        
+
         if counters.pr_merged > 0 {
-            println!("   • Clean up {} branches with merged PRs", counters.pr_merged);
+            println!(
+                "   • Clean up {} branches with merged PRs",
+                counters.pr_merged
+            );
         }
     }
 
@@ -267,7 +281,9 @@ impl ShowWipCommand {
         println!();
         ColoredOutput::log_header("💡 Tips:");
         println!("   • To work on a branch: cd repo-name/branch-name");
-        println!("   • To create new worktree: cd repo-name && git worktree add new-branch origin/new-branch");
+        println!(
+            "   • To create new worktree: cd repo-name && git worktree add new-branch origin/new-branch"
+        );
         println!("   • To remove finished work: cd repo-name && git worktree remove branch-name");
         println!("   • To create PR: gh pr create (from worktree directory)");
         println!("   • To check PR status: gh pr status");
@@ -276,14 +292,17 @@ impl ShowWipCommand {
         }
     }
 
-    async fn collect_repositories(&self, search_path: &str) -> Result<Vec<tokio::task::JoinHandle<Result<RepoResult>>>> {
+    async fn collect_repositories(
+        &self,
+        search_path: &str,
+    ) -> Result<Vec<tokio::task::JoinHandle<Result<RepoResult>>>> {
         let mut repo_tasks = Vec::new();
         let entries = fs::read_dir(search_path)?;
-        
+
         for entry in entries {
             let entry = entry?;
             let path = entry.path();
-            
+
             if !path.is_dir() {
                 continue;
             }
@@ -295,13 +314,12 @@ impl ShowWipCommand {
 
             let path_str = path.to_str().unwrap().to_string();
             let fast_mode = self.fast;
-            
-            let task = tokio::spawn(async move {
-                Self::process_repository(path_str, fast_mode).await
-            });
+
+            let task =
+                tokio::spawn(async move { Self::process_repository(path_str, fast_mode).await });
             repo_tasks.push(task);
         }
-        
+
         Ok(repo_tasks)
     }
 
@@ -313,7 +331,7 @@ impl ShowWipCommand {
             .to_string();
 
         let repo = GitRepository::new(&repo_path);
-        
+
         // Check if it's a bare repository
         if !repo.is_bare().unwrap_or(false) {
             return Ok(RepoResult {
@@ -324,7 +342,7 @@ impl ShowWipCommand {
 
         // Get worktree list for this repo
         let worktrees = repo.list_worktrees()?;
-        
+
         if worktrees.is_empty() {
             return Ok(RepoResult {
                 name: repo_name,
@@ -349,8 +367,7 @@ impl ShowWipCommand {
         // Get PR statuses in batch if we have GitHub integration
         let pr_statuses = if !fast_mode && !github_repo.is_empty() {
             let branch_names: Vec<String> = worktrees.iter().map(|w| w.branch.clone()).collect();
-            GitHubIntegration::get_batch_pr_status(&github_repo, &branch_names)
-                .unwrap_or_default()
+            GitHubIntegration::get_batch_pr_status(&github_repo, &branch_names).unwrap_or_default()
         } else {
             HashMap::new()
         };
@@ -361,12 +378,11 @@ impl ShowWipCommand {
             // Get comprehensive status
             let local_status = repo.get_local_status(&worktree.path)?;
             let remote_status = repo.get_remote_status(&worktree.path, &worktree.branch)?;
-            let pr_status = if fast_mode {
-                PrStatus::NoGitHub
-            } else if github_repo.is_empty() {
+            let pr_status = if fast_mode || github_repo.is_empty() {
                 PrStatus::NoGitHub
             } else {
-                pr_statuses.get(&worktree.branch)
+                pr_statuses
+                    .get(&worktree.branch)
                     .cloned()
                     .unwrap_or(PrStatus::NoPr)
             };
