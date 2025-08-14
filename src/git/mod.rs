@@ -2,6 +2,97 @@ use anyhow::{Result, anyhow};
 use std::path::Path;
 use std::process::Command;
 
+/// Trait for abstracting Git command operations
+pub trait GitClient {
+    fn get_config(&self, path: &str, key: &str) -> Result<String>;
+    fn list_worktrees(&self, path: &str) -> Result<String>;
+    fn get_status_porcelain(&self, path: &str) -> Result<String>;
+    fn get_status_branch(&self, path: &str) -> Result<String>;
+    fn get_remote_url(&self, path: &str, remote: &str) -> Result<String>;
+    fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
+}
+
+/// Default implementation using system git command
+pub struct SystemGitClient;
+
+impl GitClient for SystemGitClient {
+    fn get_config(&self, path: &str, key: &str) -> Result<String> {
+        let output = Command::new("git")
+            .args(["-C", path, "config", "--get", key])
+            .output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(anyhow!("Git config command failed"))
+        }
+    }
+
+    fn list_worktrees(&self, path: &str) -> Result<String> {
+        let output = Command::new("git")
+            .args(["-C", path, "worktree", "list"])
+            .output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow!("Git worktree list failed"))
+        }
+    }
+
+    fn get_status_porcelain(&self, path: &str) -> Result<String> {
+        let output = Command::new("git")
+            .args(["-C", path, "status", "--porcelain"])
+            .output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow!("Git status failed"))
+        }
+    }
+
+    fn get_status_branch(&self, path: &str) -> Result<String> {
+        let output = Command::new("git")
+            .args(["-C", path, "status", "--porcelain=v1", "--branch"])
+            .output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow!("Git status branch failed"))
+        }
+    }
+
+    fn get_remote_url(&self, path: &str, remote: &str) -> Result<String> {
+        let output = Command::new("git")
+            .args(["-C", path, "remote", "get-url", remote])
+            .output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        } else {
+            Err(anyhow!("Failed to get remote URL"))
+        }
+    }
+
+    fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                path,
+                "ls-remote",
+                "--exit-code",
+                "--heads",
+                remote,
+                branch,
+            ])
+            .output()?;
+
+        Ok(output.status.success())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WorktreeInfo {
     pub path: String,
@@ -16,26 +107,6 @@ pub enum LocalStatus {
     Missing,
 }
 
-impl LocalStatus {
-    pub fn emoji(&self) -> &'static str {
-        match self {
-            LocalStatus::Clean => "✅",
-            LocalStatus::Dirty => "🔧",
-            LocalStatus::Staged => "📦",
-            LocalStatus::Missing => "❌",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            LocalStatus::Clean => "Clean",
-            LocalStatus::Dirty => "Dirty",
-            LocalStatus::Staged => "Staged",
-            LocalStatus::Missing => "Missing",
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub enum RemoteStatus {
     UpToDate,
@@ -47,66 +118,37 @@ pub enum RemoteStatus {
     NoRemote,
 }
 
-impl RemoteStatus {
-    pub fn emoji(&self) -> &'static str {
-        match self {
-            RemoteStatus::UpToDate => "✅",
-            RemoteStatus::Ahead(_) => "⬆️",
-            RemoteStatus::Behind(_) => "⬇️",
-            RemoteStatus::Diverged(_, _) => "🔀",
-            RemoteStatus::NotPushed => "❌",
-            RemoteStatus::NotTracking => "🔄",
-            RemoteStatus::NoRemote => "❌",
-        }
-    }
-
-    pub fn description(&self) -> String {
-        match self {
-            RemoteStatus::UpToDate => "Up to date".to_string(),
-            RemoteStatus::Ahead(n) => format!("Ahead {}", n),
-            RemoteStatus::Behind(n) => format!("Behind {}", n),
-            RemoteStatus::Diverged(ahead, behind) => format!("Diverged (+{}/−{})", ahead, behind),
-            RemoteStatus::NotPushed => "Not pushed".to_string(),
-            RemoteStatus::NotTracking => "Not tracking".to_string(),
-            RemoteStatus::NoRemote => "No remote".to_string(),
-        }
-    }
-}
-
-pub struct GitRepository {
+pub struct GitRepository<T: GitClient> {
     pub path: String,
+    git_client: T,
 }
 
-impl GitRepository {
-    pub fn new(path: &str) -> Self {
+impl<T: GitClient> GitRepository<T> {
+    pub fn new(path: &str, git_client: T) -> Self {
         Self {
             path: path.to_string(),
+            git_client,
         }
     }
 
     pub fn is_bare(&self) -> Result<bool> {
-        let output = Command::new("git")
-            .args(["-C", &self.path, "config", "--get", "core.bare"])
-            .output()?;
-
-        if output.status.success() {
-            let bare_str = String::from_utf8_lossy(&output.stdout);
-            Ok(bare_str.trim() == "true")
-        } else {
-            Ok(false)
+        match self.git_client.get_config(&self.path, "core.bare") {
+            Ok(config_value) => Ok(config_value.trim() == "true"),
+            Err(_) => Ok(false),
         }
     }
 
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
-        let output = Command::new("git")
-            .args(["-C", &self.path, "worktree", "list"])
-            .output()?;
+        let worktrees_output = match self.git_client.list_worktrees(&self.path) {
+            Ok(output) => output,
+            Err(_) => return Ok(vec![]),
+        };
 
-        if !output.status.success() {
-            return Ok(vec![]);
-        }
+        Ok(Self::parse_worktrees(&worktrees_output))
+    }
 
-        let worktrees_str = String::from_utf8_lossy(&output.stdout);
+    /// Pure function to parse worktree output
+    fn parse_worktrees(worktrees_str: &str) -> Vec<WorktreeInfo> {
         let mut worktrees = Vec::new();
 
         for line in worktrees_str.lines() {
@@ -129,7 +171,7 @@ impl GitRepository {
             }
         }
 
-        Ok(worktrees)
+        worktrees
     }
 
     pub fn get_local_status(&self, worktree_path: &str) -> Result<LocalStatus> {
@@ -137,27 +179,27 @@ impl GitRepository {
             return Ok(LocalStatus::Missing);
         }
 
-        let output = Command::new("git")
-            .args(["-C", worktree_path, "status", "--porcelain"])
-            .output()?;
+        let status_output = match self.git_client.get_status_porcelain(worktree_path) {
+            Ok(output) => output,
+            Err(_) => return Ok(LocalStatus::Missing),
+        };
 
-        if !output.status.success() {
-            return Ok(LocalStatus::Missing);
-        }
+        Ok(Self::parse_local_status(&status_output))
+    }
 
-        let status_output = String::from_utf8_lossy(&output.stdout);
-
+    /// Pure function to parse local status from git status --porcelain output
+    fn parse_local_status(status_output: &str) -> LocalStatus {
         if status_output.trim().is_empty() {
-            Ok(LocalStatus::Clean)
+            LocalStatus::Clean
         } else if status_output.lines().any(|line| {
             line.starts_with('A')
                 || line.starts_with('D')
                 || line.starts_with('R')
                 || line.starts_with('M')
         }) {
-            Ok(LocalStatus::Staged)
+            LocalStatus::Staged
         } else {
-            Ok(LocalStatus::Dirty)
+            LocalStatus::Dirty
         }
     }
 
@@ -170,19 +212,13 @@ impl GitRepository {
             return Ok(RemoteStatus::NoRemote);
         }
 
-        // Get upstream tracking info and ahead/behind counts in one call
-        let status_output = Command::new("git")
-            .args(["-C", worktree_path, "status", "--porcelain=v1", "--branch"])
-            .output()?;
+        let status_output = match self.git_client.get_status_branch(worktree_path) {
+            Ok(output) => output,
+            Err(_) => return Ok(RemoteStatus::NoRemote),
+        };
 
-        if !status_output.status.success() {
-            return Ok(RemoteStatus::NoRemote);
-        }
+        let first_line = status_output.lines().next().unwrap_or("");
 
-        let status_str = String::from_utf8_lossy(&status_output.stdout);
-        let first_line = status_str.lines().next().unwrap_or("");
-
-        // Parse the branch line: ## branch_name...origin/branch_name [ahead N, behind M]
         if !first_line.starts_with("## ") {
             return Ok(RemoteStatus::NoRemote);
         }
@@ -190,27 +226,21 @@ impl GitRepository {
         let branch_info = &first_line[3..]; // Remove "## "
 
         if !branch_info.contains("...") {
-            // No upstream tracking
-            // Quick check if branch exists on remote using git ls-remote
-            let remote_check = Command::new("git")
-                .args([
-                    "-C",
-                    worktree_path,
-                    "ls-remote",
-                    "--exit-code",
-                    "--heads",
-                    "origin",
-                    branch_name,
-                ])
-                .output()?;
-
-            if remote_check.status.success() {
-                return Ok(RemoteStatus::NotTracking);
-            } else {
-                return Ok(RemoteStatus::NotPushed);
+            // No upstream tracking - check if branch exists on remote
+            match self
+                .git_client
+                .check_remote_branch(worktree_path, "origin", branch_name)
+            {
+                Ok(true) => Ok(RemoteStatus::NotTracking),
+                Ok(false) | Err(_) => Ok(RemoteStatus::NotPushed),
             }
+        } else {
+            Ok(Self::parse_remote_status(branch_info))
         }
+    }
 
+    /// Pure function to parse remote status from git status branch line
+    fn parse_remote_status(branch_info: &str) -> RemoteStatus {
         // Parse ahead/behind from status output
         if let Some(bracket_start) = branch_info.find('[') {
             let bracket_content = &branch_info[bracket_start + 1..];
@@ -229,29 +259,21 @@ impl GitRepository {
                 }
 
                 match (ahead, behind) {
-                    (0, 0) => Ok(RemoteStatus::UpToDate),
-                    (a, 0) if a > 0 => Ok(RemoteStatus::Ahead(a)),
-                    (0, b) if b > 0 => Ok(RemoteStatus::Behind(b)),
-                    (a, b) if a > 0 && b > 0 => Ok(RemoteStatus::Diverged(a, b)),
-                    _ => Ok(RemoteStatus::UpToDate),
+                    (0, 0) => RemoteStatus::UpToDate,
+                    (a, 0) if a > 0 => RemoteStatus::Ahead(a),
+                    (0, b) if b > 0 => RemoteStatus::Behind(b),
+                    (a, b) if a > 0 && b > 0 => RemoteStatus::Diverged(a, b),
+                    _ => RemoteStatus::UpToDate,
                 }
             } else {
-                Ok(RemoteStatus::UpToDate)
+                RemoteStatus::UpToDate
             }
         } else {
-            Ok(RemoteStatus::UpToDate)
+            RemoteStatus::UpToDate
         }
     }
 
     pub fn get_remote_url(&self, worktree_path: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", worktree_path, "remote", "get-url", "origin"])
-            .output()?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        } else {
-            Err(anyhow!("Failed to get remote URL"))
-        }
+        self.git_client.get_remote_url(worktree_path, "origin")
     }
 }
