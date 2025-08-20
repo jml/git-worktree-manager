@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::process::Command;
 
 /// Trait for abstracting GitHub CLI operations
@@ -65,6 +66,21 @@ pub enum PrStatus {
     NoPr,
     NoGitHub,
     NoGhCli,
+}
+
+impl Display for PrStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            PrStatus::Open(num, Some(approval)) => format!("Open #{} ({})", num, approval),
+            PrStatus::Open(num, None) => format!("Open #{}", num),
+            PrStatus::Merged(num) => format!("Merged #{}", num),
+            PrStatus::Closed(num) => format!("Closed #{}", num),
+            PrStatus::NoPr => "No PR".to_string(),
+            PrStatus::NoGitHub => "No GitHub".to_string(),
+            PrStatus::NoGhCli => "No gh CLI".to_string(),
+        };
+        write!(f, "{}", text)
+    }
 }
 
 #[derive(Deserialize)]

@@ -18,6 +18,9 @@ pub struct ShowWipCommand {
     /// Skip GitHub integration for faster execution
     #[arg(long)]
     fast: bool,
+    /// Disable emoji in status output
+    #[arg(long)]
+    no_emoji: bool,
 }
 
 impl ShowWipCommand {
@@ -48,7 +51,8 @@ impl ShowWipCommand {
             WorktreeAnalyzer::analyze(&repo_results);
 
         // Display results as table
-        let table_output = table::create_table(&repo_results);
+        let use_emoji = !self.no_emoji;
+        let table_output = table::create_table(&repo_results, use_emoji);
         println!("{}", table_output);
 
         // Simple summary

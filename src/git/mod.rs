@@ -1,4 +1,5 @@
 use anyhow::{Result, anyhow};
+use std::fmt::Display;
 use std::path::Path;
 use std::process::Command;
 
@@ -116,6 +117,33 @@ pub enum RemoteStatus {
     NotPushed,
     NotTracking,
     NoRemote,
+}
+
+impl Display for LocalStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            LocalStatus::Clean => "Clean",
+            LocalStatus::Dirty => "Dirty",
+            LocalStatus::Staged => "Staged",
+            LocalStatus::Missing => "Missing",
+        };
+        write!(f, "{}", text)
+    }
+}
+
+impl Display for RemoteStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            RemoteStatus::UpToDate => "Up to date".to_string(),
+            RemoteStatus::Ahead(n) => format!("Ahead {}", n),
+            RemoteStatus::Behind(n) => format!("Behind {}", n),
+            RemoteStatus::Diverged(ahead, behind) => format!("Diverged +{} -{}", ahead, behind),
+            RemoteStatus::NotPushed => "Not pushed".to_string(),
+            RemoteStatus::NotTracking => "Not tracking".to_string(),
+            RemoteStatus::NoRemote => "No remote".to_string(),
+        };
+        write!(f, "{}", text)
+    }
 }
 
 pub struct GitRepository<T: GitClient> {
