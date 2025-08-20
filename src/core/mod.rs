@@ -14,7 +14,6 @@ pub struct WorktreeStatus {
 #[derive(Debug, Clone)]
 pub struct WorktreeResult {
     pub branch: String,
-    pub path: String,
     pub status: WorktreeStatus,
 }
 
@@ -108,47 +107,5 @@ impl WorktreeAnalyzer {
         }
 
         (total_wip, repos_with_wip, status_counters, wip_branches)
-    }
-
-    /// Generate action items based on status counters - pure function
-    pub fn generate_action_items(counters: &StatusCounters) -> Vec<String> {
-        let mut actions = Vec::new();
-
-        if counters.dirty > 0 || counters.staged > 0 {
-            actions.push(format!(
-                "Commit changes in {} dirty + {} staged branches",
-                counters.dirty, counters.staged
-            ));
-        }
-
-        if counters.not_pushed > 0 || counters.ahead > 0 {
-            actions.push(format!(
-                "Push {} unpushed + {} ahead branches",
-                counters.not_pushed, counters.ahead
-            ));
-        }
-
-        if counters.behind > 0 || counters.diverged > 0 {
-            actions.push(format!(
-                "Pull/rebase {} behind + {} diverged branches",
-                counters.behind, counters.diverged
-            ));
-        }
-
-        if counters.no_pr > 0 {
-            actions.push(format!(
-                "Create PRs for {} branches without PRs",
-                counters.no_pr
-            ));
-        }
-
-        if counters.pr_merged > 0 {
-            actions.push(format!(
-                "Clean up {} branches with merged PRs",
-                counters.pr_merged
-            ));
-        }
-
-        actions
     }
 }

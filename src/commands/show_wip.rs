@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use crate::core::{RepoResult, StatusCounters, WorktreeAnalyzer, WorktreeResult, WorktreeStatus};
+use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeResult, WorktreeStatus};
 use crate::git::{GitRepository, SystemGitClient};
 use crate::github::{GitHubIntegration, PrStatus, SystemGitHubClient};
-use crate::output::{ColoredOutput, StatusFormatter};
+use crate::output::table;
 
 #[derive(Args)]
 pub struct ShowWipCommand {
@@ -26,23 +26,10 @@ impl ShowWipCommand {
         let search_path = self.path.as_deref().unwrap_or(".");
 
         if !Path::new(&format!("{}/convert-to-worktree.sh", search_path)).exists() {
-            ColoredOutput::log_header(
-                "⚠️  Warning: convert-to-worktree.sh not found in current directory",
-            );
-            ColoredOutput::log_header(
-                "   This tool is optimized for the chainguard directory structure.",
-            );
+            println!("⚠️  Warning: convert-to-worktree.sh not found in current directory");
+            println!("   This tool is optimized for the chainguard directory structure.");
             println!();
         }
-
-        let header = if self.fast {
-            "📋 Work In Progress - Fast Local Status Overview"
-        } else {
-            "📋 Work In Progress - GitHub-Integrated Status Overview"
-        };
-        ColoredOutput::log_header(header);
-        ColoredOutput::log_header("======================================================");
-        println!();
 
         // Find all repositories
         let repo_tasks = self.collect_repositories(search_path).await?;
@@ -57,110 +44,21 @@ impl ShowWipCommand {
         }
 
         // Use pure functional core to analyze results
-        let (total_wip, repos_with_wip, status_counters, wip_branches) =
+        let (total_wip, repos_with_wip, _status_counters, _wip_branches) =
             WorktreeAnalyzer::analyze(&repo_results);
 
-        // Display results (this is the imperative shell - output side effects)
-        for repo_result in &repo_results {
-            if !repo_result.worktrees.is_empty() {
-                ColoredOutput::log_repo(&format!("📁 {}", repo_result.name));
+        // Display results as table
+        let table_output = table::create_table(&repo_results);
+        println!("{}", table_output);
 
-                for worktree in &repo_result.worktrees {
-                    ColoredOutput::log_branch(&format!("🔨 {}", worktree.branch));
-                    ColoredOutput::log_path(&format!("📍 {}", worktree.path));
-
-                    // Display status line
-                    let status_line = format!(
-                        "{} {} | {} {} | {} {}",
-                        worktree.status.local_status.emoji(),
-                        worktree.status.local_status.description(),
-                        worktree.status.remote_status.emoji(),
-                        worktree.status.remote_status.description(),
-                        worktree.status.pr_status.emoji(),
-                        worktree.status.pr_status.description()
-                    );
-                    ColoredOutput::log_status(&status_line);
-                }
-                println!();
-            }
-        }
-
-        // Summary
-        println!();
-        ColoredOutput::log_header("📊 Comprehensive Summary");
-        ColoredOutput::log_header("========================");
-        ColoredOutput::log_summary(&format!("Total WIP branches: {}", total_wip));
-        ColoredOutput::log_summary(&format!("Repositories with WIP: {}", repos_with_wip));
-
-        if total_wip == 0 {
+        // Simple summary
+        if total_wip > 0 {
             println!();
-            ColoredOutput::log_summary("🎉 No work in progress - all caught up!");
-        } else {
-            self.display_status_breakdown(&status_counters);
-            self.display_wip_branches(&wip_branches);
-            let action_items = WorktreeAnalyzer::generate_action_items(&status_counters);
-            self.display_action_items(&action_items);
+            println!("Total WIP branches: {}", total_wip);
+            println!("Repositories with WIP: {}", repos_with_wip);
         }
-
-        self.display_tips();
 
         Ok(())
-    }
-
-    fn display_status_breakdown(&self, counters: &StatusCounters) {
-        println!();
-        ColoredOutput::log_header("📈 Status Breakdown:");
-
-        println!(
-            "  Local: ✅ Clean ({}) | 🔧 Dirty ({}) | 📦 Staged ({})",
-            counters.clean, counters.dirty, counters.staged
-        );
-
-        println!(
-            "  Remote: ✅ Up to date ({}) | ⬆️ Ahead ({}) | ⬇️ Behind ({}) | 🔀 Diverged ({}) | ❌ Not pushed ({})",
-            counters.up_to_date,
-            counters.ahead,
-            counters.behind,
-            counters.diverged,
-            counters.not_pushed
-        );
-
-        println!(
-            "  PRs: 📋 Open ({}) | ✅ Merged ({}) | ❌ Closed ({}) | ➖ No PR ({})",
-            counters.pr_open, counters.pr_merged, counters.pr_closed, counters.no_pr
-        );
-    }
-
-    fn display_wip_branches(&self, branches: &[String]) {
-        println!();
-        ColoredOutput::log_summary("💼 Current WIP branches:");
-        for branch in branches {
-            ColoredOutput::log_summary(&format!("   • {}", branch));
-        }
-    }
-
-    fn display_action_items(&self, action_items: &[String]) {
-        println!();
-        ColoredOutput::log_header("🎯 Action Items:");
-
-        for action in action_items {
-            println!("   • {}", action);
-        }
-    }
-
-    fn display_tips(&self) {
-        println!();
-        ColoredOutput::log_header("💡 Tips:");
-        println!("   • To work on a branch: cd repo-name/branch-name");
-        println!(
-            "   • To create new worktree: cd repo-name && git worktree add new-branch origin/new-branch"
-        );
-        println!("   • To remove finished work: cd repo-name && git worktree remove branch-name");
-        println!("   • To create PR: gh pr create (from worktree directory)");
-        println!("   • To check PR status: gh pr status");
-        if !self.fast {
-            println!("   • Use --fast flag to skip GitHub integration for faster execution");
-        }
     }
 
     async fn collect_repositories(
@@ -263,7 +161,6 @@ impl ShowWipCommand {
 
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
-                path: worktree.path.clone(),
                 status: WorktreeStatus {
                     local_status,
                     remote_status,
