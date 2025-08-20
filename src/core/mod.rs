@@ -1,5 +1,4 @@
 use crate::git::{LocalStatus, RemoteStatus};
-use crate::github::PrStatus;
 
 /// Pure functional core for worktree status computation
 /// This module contains no I/O operations - only data transformations and business logic
@@ -8,7 +7,6 @@ use crate::github::PrStatus;
 pub struct WorktreeStatus {
     pub local_status: LocalStatus,
     pub remote_status: RemoteStatus,
-    pub pr_status: PrStatus,
 }
 
 #[derive(Debug, Clone)]
@@ -38,12 +36,6 @@ pub struct StatusCounters {
     pub diverged: u32,
     pub not_pushed: u32,
     pub not_tracking: u32,
-
-    // PR status counters
-    pub pr_open: u32,
-    pub pr_merged: u32,
-    pub pr_closed: u32,
-    pub no_pr: u32,
 }
 
 impl StatusCounters {
@@ -70,15 +62,6 @@ impl StatusCounters {
             RemoteStatus::NotPushed => self.not_pushed += 1,
             RemoteStatus::NotTracking => self.not_tracking += 1,
             RemoteStatus::NoRemote => {}
-        }
-
-        // Update PR status counters
-        match status.pr_status {
-            PrStatus::Open(_, _) => self.pr_open += 1,
-            PrStatus::Merged(_) => self.pr_merged += 1,
-            PrStatus::Closed(_) => self.pr_closed += 1,
-            PrStatus::NoPr => self.no_pr += 1,
-            PrStatus::NoGitHub | PrStatus::NoGhCli => {}
         }
     }
 }

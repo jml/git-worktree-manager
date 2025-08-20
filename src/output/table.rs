@@ -1,6 +1,5 @@
 use crate::core::{RepoResult, WorktreeResult};
 use crate::git::{LocalStatus, RemoteStatus};
-use crate::github::PrStatus;
 use std::fmt::Display;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -35,20 +34,6 @@ impl Display for EmojiStatus<RemoteStatus> {
     }
 }
 
-impl Display for EmojiStatus<PrStatus> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let emoji = match self.0 {
-            PrStatus::Open(_, _) => "📋",
-            PrStatus::Merged(_) => "✅",
-            PrStatus::Closed(_) => "❌",
-            PrStatus::NoPr => "➖",
-            PrStatus::NoGitHub => "➖",
-            PrStatus::NoGhCli => "➖",
-        };
-        write!(f, "{} {}", emoji, self.0)
-    }
-}
-
 #[derive(Tabled)]
 pub struct TableRow {
     #[tabled(rename = "Repository")]
@@ -59,8 +44,6 @@ pub struct TableRow {
     pub local_status: String,
     #[tabled(rename = "Remote")]
     pub remote_status: String,
-    #[tabled(rename = "PR")]
-    pub pr_status: String,
 }
 
 impl TableRow {
@@ -77,11 +60,6 @@ impl TableRow {
                 EmojiStatus(worktree.status.remote_status.clone()).to_string()
             } else {
                 worktree.status.remote_status.to_string()
-            },
-            pr_status: if use_emoji {
-                EmojiStatus(worktree.status.pr_status.clone()).to_string()
-            } else {
-                worktree.status.pr_status.to_string()
             },
         }
     }

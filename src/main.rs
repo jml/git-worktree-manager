@@ -4,14 +4,13 @@ use clap::{Parser, Subcommand};
 mod commands;
 mod core;
 mod git;
-mod github;
 mod output;
 
 use commands::show_wip::ShowWipCommand;
 
 #[derive(Parser)]
 #[command(name = "git-worktree-manager")]
-#[command(about = "An opinionated git worktree management tool with GitHub integration")]
+#[command(about = "An opinionated git worktree management tool")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]

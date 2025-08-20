@@ -1,13 +1,11 @@
 use anyhow::Result;
 use clap::Args;
 use futures::future::try_join_all;
-use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeResult, WorktreeStatus};
 use crate::git::{GitRepository, SystemGitClient};
-use crate::github::{GitHubIntegration, PrStatus, SystemGitHubClient};
 use crate::output::table;
 
 #[derive(Args)]
@@ -15,9 +13,6 @@ pub struct ShowWipCommand {
     /// Directory to search for repositories (defaults to current directory)
     #[arg(short, long)]
     path: Option<String>,
-    /// Skip GitHub integration for faster execution
-    #[arg(long)]
-    fast: bool,
     /// Disable emoji in status output
     #[arg(long)]
     no_emoji: bool,
@@ -79,17 +74,15 @@ impl ShowWipCommand {
             }
 
             let path_str = path.to_str().unwrap().to_string();
-            let fast_mode = self.fast;
 
-            let task =
-                tokio::spawn(async move { Self::process_repository(path_str, fast_mode).await });
+            let task = tokio::spawn(async move { Self::process_repository(path_str).await });
             repo_tasks.push(task);
         }
 
         Ok(repo_tasks)
     }
 
-    async fn process_repository(repo_path: String, fast_mode: bool) -> Result<RepoResult> {
+    async fn process_repository(repo_path: String) -> Result<RepoResult> {
         let repo_name = Path::new(&repo_path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -116,52 +109,18 @@ impl ShowWipCommand {
             });
         }
 
-        // Get GitHub repo info once for this repository (cached within this execution)
-        let github_repo = if !fast_mode {
-            let main_path = Path::new(&repo_path).join("main");
-            if main_path.exists() {
-                repo.get_remote_url(main_path.to_str().unwrap())
-                    .and_then(|url| GitHubIntegration::<SystemGitHubClient>::get_repo_info(&url))
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            }
-        } else {
-            String::new()
-        };
-
-        // Get PR statuses in batch if we have GitHub integration
-        let pr_statuses = if !fast_mode && !github_repo.is_empty() {
-            let branch_names: Vec<String> = worktrees.iter().map(|w| w.branch.clone()).collect();
-            let github_integration = GitHubIntegration::new(SystemGitHubClient);
-            github_integration
-                .get_batch_pr_status(&github_repo, &branch_names)
-                .unwrap_or_default()
-        } else {
-            HashMap::new()
-        };
-
         // Process all worktrees for this repo
         let mut worktree_results = Vec::new();
         for worktree in worktrees {
-            // Get comprehensive status
+            // Get local and remote status only
             let local_status = repo.get_local_status(&worktree.path)?;
             let remote_status = repo.get_remote_status(&worktree.path, &worktree.branch)?;
-            let pr_status = if fast_mode || github_repo.is_empty() {
-                PrStatus::NoGitHub
-            } else {
-                pr_statuses
-                    .get(&worktree.branch)
-                    .cloned()
-                    .unwrap_or(PrStatus::NoPr)
-            };
 
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
                 status: WorktreeStatus {
                     local_status,
                     remote_status,
-                    pr_status,
                 },
             });
         }

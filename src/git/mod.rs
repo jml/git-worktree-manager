@@ -9,7 +9,6 @@ pub trait GitClient {
     fn list_worktrees(&self, path: &str) -> Result<String>;
     fn get_status_porcelain(&self, path: &str) -> Result<String>;
     fn get_status_branch(&self, path: &str) -> Result<String>;
-    fn get_remote_url(&self, path: &str, remote: &str) -> Result<String>;
     fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
 }
 
@@ -62,18 +61,6 @@ impl GitClient for SystemGitClient {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         } else {
             Err(anyhow!("Git status branch failed"))
-        }
-    }
-
-    fn get_remote_url(&self, path: &str, remote: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", path, "remote", "get-url", remote])
-            .output()?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        } else {
-            Err(anyhow!("Failed to get remote URL"))
         }
     }
 
@@ -299,9 +286,5 @@ impl<T: GitClient> GitRepository<T> {
         } else {
             RemoteStatus::UpToDate
         }
-    }
-
-    pub fn get_remote_url(&self, worktree_path: &str) -> Result<String> {
-        self.git_client.get_remote_url(worktree_path, "origin")
     }
 }

@@ -1,13 +1,11 @@
 # git-worktree-manager
 
-An opinionated git worktree management tool with comprehensive GitHub integration.
+An opinionated git worktree management tool.
 
 ## Features
 
-- **Comprehensive Status Tracking**: Shows local changes, remote sync status, and GitHub PR information
+- **Comprehensive Status Tracking**: Shows local changes and remote sync status
 - **Multi-Repository Support**: Scans directories for bare git repositories with worktrees
-- **GitHub Integration**: Uses `gh` CLI to fetch PR status, approvals, and checks
-- **Action Items**: Provides actionable recommendations based on current branch states
 - **Colored Output**: Easy-to-read status indicators with emojis and colors
 
 ## Installation
@@ -41,26 +39,19 @@ git-worktree-manager show-wip
 
 Options:
 - `--path <PATH>`: Directory to search for repositories (defaults to current directory)
+- `--no-emoji`: Disable emoji in status output
 
 ### Example Output
 
 ```
-📋 Work In Progress - GitHub-Integrated Status Overview
-======================================================
++------------+---------------+---------+----------+
+| Repository | Branch        | Local   | Remote   |
++------------+---------------+---------+----------+
+| my-project | feature-branch| 🔧 Dirty| ⬆️ Ahead 2|
++------------+---------------+---------+----------+
 
-📁 my-project
-  🔨 feature-branch
-    📍 /path/to/my-project/feature-branch
-    🔧 Dirty | ⬆️ Ahead 2 | 📋 PR Open (#123) ✓ Approved
-
-📊 Comprehensive Summary
-========================
 Total WIP branches: 1
 Repositories with WIP: 1
-
-🎯 Action Items:
-   • Commit changes in 1 dirty branches
-   • Push 1 ahead branches
 ```
 
 ## Status Indicators
@@ -79,18 +70,11 @@ Repositories with WIP: 1
 - ❌ **Not pushed**: Branch doesn't exist on remote
 - 🔄 **Not tracking**: Branch exists but not tracking remote
 
-### PR Status
-- 📋 **PR Open**: Pull request is open
-- ✅ **PR Merged**: Pull request was merged
-- ❌ **PR Closed**: Pull request was closed
-- ➖ **No PR**: No pull request found
-- ➖ **No GitHub**: Not a GitHub repository
 
 ## Requirements
 
 - Rust 1.70+
 - Git
-- `gh` CLI (for GitHub integration)
 
 ## Future Features
 
