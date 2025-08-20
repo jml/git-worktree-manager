@@ -25,14 +25,7 @@ pub struct ShowWipCommand {
 
 impl ShowWipCommand {
     pub async fn execute(&self) -> Result<()> {
-        // Check if we're in the expected directory structure
         let search_path = self.path.as_deref().unwrap_or(".");
-
-        if !Path::new(&format!("{}/convert-to-worktree.sh", search_path)).exists() {
-            println!("⚠️  Warning: convert-to-worktree.sh not found in current directory");
-            println!("   This tool is optimized for the chainguard directory structure.");
-            println!();
-        }
 
         // Find all repositories
         let repo_tasks = self.collect_repositories(search_path).await?;
