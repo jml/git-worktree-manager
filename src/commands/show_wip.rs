@@ -11,7 +11,8 @@ use crate::output::table;
 #[derive(Args)]
 pub struct ShowWipCommand {
     /// Directory to search for repositories (defaults to current directory)
-    #[arg(short, long)]
+    /// Can also be set via GWM_REPOS_PATH environment variable
+    #[arg(short, long, env = "GWM_REPOS_PATH")]
     path: Option<String>,
     /// Disable emoji in status output
     #[arg(long)]
