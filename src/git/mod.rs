@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
 use std::fmt::Display;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -10,6 +11,9 @@ pub trait GitClient {
     fn get_status_porcelain(&self, path: &str) -> Result<String>;
     fn get_status_branch(&self, path: &str) -> Result<String>;
     fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
+    fn get_last_commit_timestamp(&self, path: &str, branch: &str) -> Result<i64>;
+    fn check_remote_branch_exists(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
+    fn get_directory_mtime(&self, path: &str) -> Result<i64>;
 }
 
 /// Default implementation using system git command
@@ -79,6 +83,50 @@ impl GitClient for SystemGitClient {
 
         Ok(output.status.success())
     }
+
+    fn get_last_commit_timestamp(&self, path: &str, branch: &str) -> Result<i64> {
+        let output = Command::new("git")
+            .args(["-C", path, "log", "-1", "--format=%ct", branch])
+            .output()?;
+
+        if output.status.success() {
+            let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            timestamp_str
+                .parse::<i64>()
+                .map_err(|e| anyhow!("Failed to parse timestamp: {}", e))
+        } else {
+            Err(anyhow!("Git log command failed"))
+        }
+    }
+
+    fn check_remote_branch_exists(&self, path: &str, remote: &str, branch: &str) -> Result<bool> {
+        let output = Command::new("git")
+            .args([
+                "-C",
+                path,
+                "ls-remote",
+                "--heads",
+                remote,
+                &format!("refs/heads/{}", branch),
+            ])
+            .output()?;
+
+        if output.status.success() {
+            let output_str = String::from_utf8_lossy(&output.stdout);
+            Ok(!output_str.trim().is_empty())
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn get_directory_mtime(&self, path: &str) -> Result<i64> {
+        let metadata = fs::metadata(path)?;
+        let mtime = metadata.modified()?;
+        let timestamp = mtime
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| anyhow!("Failed to get timestamp: {}", e))?;
+        Ok(timestamp.as_secs() as i64)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +154,15 @@ pub enum RemoteStatus {
     NoRemote,
 }
 
+#[derive(Debug, Clone)]
+pub enum MergeStatus {
+    #[allow(dead_code)]
+    Merged, // Definitely merged (traditional merge detected)
+    LikelyMerged, // Probably squash merged (remote branch deleted + old)
+    NotMerged,    // Active branch with remote tracking
+    Unknown,      // Cannot determine status
+}
+
 impl Display for LocalStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
@@ -128,6 +185,18 @@ impl Display for RemoteStatus {
             RemoteStatus::NotPushed => "Not pushed".to_string(),
             RemoteStatus::NotTracking => "Not tracking".to_string(),
             RemoteStatus::NoRemote => "No remote".to_string(),
+        };
+        write!(f, "{}", text)
+    }
+}
+
+impl Display for MergeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            MergeStatus::Merged => "Merged",
+            MergeStatus::LikelyMerged => "Likely merged",
+            MergeStatus::NotMerged => "Not merged",
+            MergeStatus::Unknown => "Unknown",
         };
         write!(f, "{}", text)
     }
@@ -286,5 +355,43 @@ impl<T: GitClient> GitRepository<T> {
         } else {
             RemoteStatus::UpToDate
         }
+    }
+
+    pub fn get_merge_status(
+        &self,
+        worktree_path: &str,
+        branch_name: &str,
+        commit_timestamp: i64,
+    ) -> Result<MergeStatus> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        let days_old = (now - commit_timestamp) / (24 * 60 * 60);
+
+        // Check if remote branch exists
+        let remote_exists = self
+            .git_client
+            .check_remote_branch_exists(worktree_path, "origin", branch_name)
+            .unwrap_or(false);
+
+        match (remote_exists, days_old) {
+            // Remote branch deleted and branch is old - likely squash merged
+            (false, age) if age > 7 => Ok(MergeStatus::LikelyMerged),
+            // Remote exists - probably not merged yet
+            (true, _) => Ok(MergeStatus::NotMerged),
+            // Recent branch with no remote - unknown status
+            _ => Ok(MergeStatus::Unknown),
+        }
+    }
+
+    pub fn get_last_commit_timestamp(&self, worktree_path: &str, branch_name: &str) -> Result<i64> {
+        self.git_client
+            .get_last_commit_timestamp(worktree_path, branch_name)
+    }
+
+    pub fn get_directory_mtime(&self, worktree_path: &str) -> Result<i64> {
+        self.git_client.get_directory_mtime(worktree_path)
     }
 }

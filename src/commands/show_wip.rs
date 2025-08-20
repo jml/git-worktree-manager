@@ -4,7 +4,7 @@ use futures::future::try_join_all;
 use std::fs;
 use std::path::Path;
 
-use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeResult, WorktreeStatus};
+use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeFilter, WorktreeResult, WorktreeStatus};
 use crate::git::{GitRepository, SystemGitClient};
 use crate::output::table;
 
@@ -17,11 +17,161 @@ pub struct ShowWipCommand {
     /// Disable emoji in status output
     #[arg(long)]
     no_emoji: bool,
+
+    // Preset filters
+    /// Show only branches that are likely candidates for pruning (likely-merged, clean, older than 7 days)
+    #[arg(long)]
+    prune_candidates: bool,
+    /// Show only active branches (not-merged, newer than 7 days)
+    #[arg(long)]
+    active: bool,
+    /// Show only branches needing attention (diverged, behind, or missing)
+    #[arg(long)]
+    needs_attention: bool,
+    /// Show only stale branches (older than 30 days)
+    #[arg(long)]
+    stale: bool,
+
+    // Local status filters
+    /// Show only branches with dirty working directories
+    #[arg(long)]
+    dirty: bool,
+    /// Show only branches with clean working directories
+    #[arg(long)]
+    clean: bool,
+    /// Show only branches with staged changes
+    #[arg(long)]
+    staged: bool,
+    /// Show only branches with missing worktree directories
+    #[arg(long)]
+    missing: bool,
+
+    // Remote status filters
+    /// Show only branches that are ahead of their remote
+    #[arg(long)]
+    ahead: bool,
+    /// Show only branches that are behind their remote
+    #[arg(long)]
+    behind: bool,
+    /// Show only branches that have diverged from their remote
+    #[arg(long)]
+    diverged: bool,
+    /// Show only branches that haven't been pushed to remote
+    #[arg(long)]
+    not_pushed: bool,
+    /// Show only branches that exist on remote but aren't tracking
+    #[arg(long)]
+    not_tracking: bool,
+    /// Show only branches that are up to date with their remote
+    #[arg(long)]
+    up_to_date: bool,
+
+    // Merge status filters
+    /// Show only branches that appear to be merged (likely squash-merged)
+    #[arg(long)]
+    likely_merged: bool,
+    /// Show only branches that are not merged
+    #[arg(long)]
+    not_merged: bool,
+    /// Show only branches with unknown merge status
+    #[arg(long)]
+    unknown_merge: bool,
+
+    // Age filters
+    /// Show only branches older than the specified time (e.g., 30, 30d, 1w, 2m)
+    #[arg(long)]
+    older_than: Option<String>,
+    /// Show only branches newer than the specified time (e.g., 30, 30d, 1w, 2m)
+    #[arg(long)]
+    newer_than: Option<String>,
 }
 
 impl ShowWipCommand {
+    /// Build a WorktreeFilter from command line arguments
+    fn build_filter(&self) -> Result<WorktreeFilter> {
+        // Handle preset filters first (they override individual filters)
+        if self.prune_candidates {
+            return Ok(WorktreeFilter::prune_candidates());
+        }
+        if self.active {
+            return Ok(WorktreeFilter::active());
+        }
+        if self.needs_attention {
+            return Ok(WorktreeFilter::needs_attention());
+        }
+        if self.stale {
+            return Ok(WorktreeFilter::stale());
+        }
+
+        // Build custom filter from individual flags
+        let mut filter = WorktreeFilter::new();
+
+        // Local status filters
+        if self.dirty {
+            filter.dirty = Some(true);
+        }
+        if self.clean {
+            filter.clean = Some(true);
+        }
+        if self.staged {
+            filter.staged = Some(true);
+        }
+        if self.missing {
+            filter.missing = Some(true);
+        }
+
+        // Remote status filters
+        if self.ahead {
+            filter.ahead = Some(true);
+        }
+        if self.behind {
+            filter.behind = Some(true);
+        }
+        if self.diverged {
+            filter.diverged = Some(true);
+        }
+        if self.not_pushed {
+            filter.not_pushed = Some(true);
+        }
+        if self.not_tracking {
+            filter.not_tracking = Some(true);
+        }
+        if self.up_to_date {
+            filter.up_to_date = Some(true);
+        }
+
+        // Merge status filters
+        if self.likely_merged {
+            filter.likely_merged = Some(true);
+        }
+        if self.not_merged {
+            filter.not_merged = Some(true);
+        }
+        if self.unknown_merge {
+            filter.unknown_merge = Some(true);
+        }
+
+        // Age filters
+        if let Some(age_str) = &self.older_than {
+            let days = WorktreeFilter::parse_age_to_days(age_str)
+                .map_err(|e| anyhow::anyhow!("Invalid --older-than value: {}", e))?;
+            filter.older_than_days = Some(days);
+        }
+
+        if let Some(age_str) = &self.newer_than {
+            let days = WorktreeFilter::parse_age_to_days(age_str)
+                .map_err(|e| anyhow::anyhow!("Invalid --newer-than value: {}", e))?;
+            filter.newer_than_days = Some(days);
+        }
+
+        Ok(filter)
+    }
+
     pub async fn execute(&self) -> Result<()> {
         let search_path = self.path.as_deref().unwrap_or(".");
+
+        // Build filter from command line arguments
+        let filter = self.build_filter()?;
 
         // Find all repositories
         let repo_tasks = self.collect_repositories(search_path).await?;
@@ -35,13 +185,20 @@ impl ShowWipCommand {
             repo_results.push(task_result?);
         }
 
+        // Apply filtering if any filters are active
+        let filtered_results = if self.has_filters() {
+            WorktreeAnalyzer::filter_results(&repo_results, &filter)
+        } else {
+            repo_results
+        };
+
         // Use pure functional core to analyze results
         let (total_wip, repos_with_wip, _status_counters, _wip_branches) =
-            WorktreeAnalyzer::analyze(&repo_results);
+            WorktreeAnalyzer::analyze(&filtered_results);
 
         // Display results as table
         let use_emoji = !self.no_emoji;
-        let table_output = table::create_table(&repo_results, use_emoji);
+        let table_output = table::create_table(&filtered_results, use_emoji);
         println!("{}", table_output);
 
         // Simple summary
@@ -49,9 +206,108 @@ impl ShowWipCommand {
             println!();
             println!("Total WIP branches: {}", total_wip);
             println!("Repositories with WIP: {}", repos_with_wip);
+
+            // Show active filters if any
+            if self.has_filters() {
+                println!("Filters applied: {}", self.describe_filters());
+            }
+        } else if self.has_filters() {
+            println!("No branches match the specified filters.");
         }
 
         Ok(())
+    }
+
+    /// Check if any filters are active
+    fn has_filters(&self) -> bool {
+        self.prune_candidates
+            || self.active
+            || self.needs_attention
+            || self.stale
+            || self.dirty
+            || self.clean
+            || self.staged
+            || self.missing
+            || self.ahead
+            || self.behind
+            || self.diverged
+            || self.not_pushed
+            || self.not_tracking
+            || self.up_to_date
+            || self.likely_merged
+            || self.not_merged
+            || self.unknown_merge
+            || self.older_than.is_some()
+            || self.newer_than.is_some()
+    }
+
+    /// Describe active filters for user feedback
+    fn describe_filters(&self) -> String {
+        let mut filters = Vec::new();
+
+        // Preset filters
+        if self.prune_candidates {
+            filters.push("prune-candidates".to_string());
+        }
+        if self.active {
+            filters.push("active".to_string());
+        }
+        if self.needs_attention {
+            filters.push("needs-attention".to_string());
+        }
+        if self.stale {
+            filters.push("stale".to_string());
+        }
+
+        // Individual filters
+        if self.dirty {
+            filters.push("dirty".to_string());
+        }
+        if self.clean {
+            filters.push("clean".to_string());
+        }
+        if self.staged {
+            filters.push("staged".to_string());
+        }
+        if self.missing {
+            filters.push("missing".to_string());
+        }
+        if self.ahead {
+            filters.push("ahead".to_string());
+        }
+        if self.behind {
+            filters.push("behind".to_string());
+        }
+        if self.diverged {
+            filters.push("diverged".to_string());
+        }
+        if self.not_pushed {
+            filters.push("not-pushed".to_string());
+        }
+        if self.not_tracking {
+            filters.push("not-tracking".to_string());
+        }
+        if self.up_to_date {
+            filters.push("up-to-date".to_string());
+        }
+        if self.likely_merged {
+            filters.push("likely-merged".to_string());
+        }
+        if self.not_merged {
+            filters.push("not-merged".to_string());
+        }
+        if self.unknown_merge {
+            filters.push("unknown-merge".to_string());
+        }
+
+        if let Some(age) = &self.older_than {
+            filters.push(format!("older-than-{}", age));
+        }
+        if let Some(age) = &self.newer_than {
+            filters.push(format!("newer-than-{}", age));
+        }
+
+        filters.join(", ")
     }
 
     async fn collect_repositories(
@@ -113,15 +369,25 @@ impl ShowWipCommand {
         // Process all worktrees for this repo
         let mut worktree_results = Vec::new();
         for worktree in worktrees {
-            // Get local and remote status only
+            // Get all status information
             let local_status = repo.get_local_status(&worktree.path)?;
             let remote_status = repo.get_remote_status(&worktree.path, &worktree.branch)?;
+            let commit_timestamp = repo
+                .get_last_commit_timestamp(&worktree.path, &worktree.branch)
+                .unwrap_or(0);
+            let directory_mtime = repo.get_directory_mtime(&worktree.path).unwrap_or(0);
+            let merge_status = repo
+                .get_merge_status(&worktree.path, &worktree.branch, commit_timestamp)
+                .unwrap_or(crate::git::MergeStatus::Unknown);
 
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
                 status: WorktreeStatus {
                     local_status,
                     remote_status,
+                    commit_timestamp,
+                    directory_mtime,
+                    merge_status,
                 },
             });
         }

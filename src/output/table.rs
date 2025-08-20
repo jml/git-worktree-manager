@@ -1,5 +1,5 @@
 use crate::core::{RepoResult, WorktreeResult};
-use crate::git::{LocalStatus, RemoteStatus};
+use crate::git::{LocalStatus, MergeStatus, RemoteStatus};
 use std::fmt::Display;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -34,6 +34,18 @@ impl Display for EmojiStatus<RemoteStatus> {
     }
 }
 
+impl Display for EmojiStatus<MergeStatus> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let emoji = match self.0 {
+            MergeStatus::Merged => "✅",
+            MergeStatus::LikelyMerged => "🤔",
+            MergeStatus::NotMerged => "🚧",
+            MergeStatus::Unknown => "❓",
+        };
+        write!(f, "{} {}", emoji, self.0)
+    }
+}
+
 #[derive(Tabled)]
 pub struct TableRow {
     #[tabled(rename = "Repository")]
@@ -44,6 +56,10 @@ pub struct TableRow {
     pub local_status: String,
     #[tabled(rename = "Remote")]
     pub remote_status: String,
+    #[tabled(rename = "Age")]
+    pub commit_age: String,
+    #[tabled(rename = "Merge Status")]
+    pub merge_status: String,
 }
 
 impl TableRow {
@@ -61,7 +77,35 @@ impl TableRow {
             } else {
                 worktree.status.remote_status.to_string()
             },
+            commit_age: format_age(worktree.status.commit_timestamp),
+            merge_status: if use_emoji {
+                EmojiStatus(worktree.status.merge_status.clone()).to_string()
+            } else {
+                worktree.status.merge_status.to_string()
+            },
         }
+    }
+}
+
+fn format_age(timestamp: i64) -> String {
+    if timestamp == 0 {
+        return "Unknown".to_string();
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let days_ago = (now - timestamp) / (24 * 60 * 60);
+
+    match days_ago {
+        0 => "Today".to_string(),
+        1 => "1 day".to_string(),
+        n if n < 7 => format!("{} days", n),
+        n if n < 30 => format!("{} weeks", n / 7),
+        n if n < 365 => format!("{} months", n / 30),
+        n => format!("{} years", n / 365),
     }
 }
 
