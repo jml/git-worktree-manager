@@ -310,16 +310,16 @@ impl WorktreeFilter {
 
         let days_old = (current_timestamp - commit_timestamp) / (24 * 60 * 60);
 
-        if let Some(older_than) = self.older_than_days {
-            if days_old < older_than as i64 {
-                return false;
-            }
+        if let Some(older_than) = self.older_than_days
+            && days_old < older_than as i64
+        {
+            return false;
         }
 
-        if let Some(newer_than) = self.newer_than_days {
-            if days_old > newer_than as i64 {
-                return false;
-            }
+        if let Some(newer_than) = self.newer_than_days
+            && days_old > newer_than as i64
+        {
+            return false;
         }
 
         true
