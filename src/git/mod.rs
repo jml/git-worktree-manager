@@ -242,15 +242,15 @@ impl<T: GitClient> GitRepository<T> {
             }
 
             // Parse format: /path/to/worktree [commit] [branch]
-            if let Some(branch_start) = line.rfind('[') {
-                if let Some(branch_end) = line.rfind(']') {
-                    let branch = line[branch_start + 1..branch_end].to_string();
-                    let path = line.split_whitespace().next().unwrap_or("").to_string();
+            if let Some(branch_start) = line.rfind('[')
+                && let Some(branch_end) = line.rfind(']')
+            {
+                let branch = line[branch_start + 1..branch_end].to_string();
+                let path = line.split_whitespace().next().unwrap_or("").to_string();
 
-                    // Skip main/master branches for WIP detection
-                    if branch != "main" && branch != "master" {
-                        worktrees.push(WorktreeInfo { path, branch });
-                    }
+                // Skip main/master branches for WIP detection
+                if branch != "main" && branch != "master" {
+                    worktrees.push(WorktreeInfo { path, branch });
                 }
             }
         }
