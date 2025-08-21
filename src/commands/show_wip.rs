@@ -2,7 +2,7 @@ use anyhow::Result;
 use clap::Args;
 use futures::future::try_join_all;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeFilter, WorktreeResult, WorktreeStatus};
 use crate::git::{GitRepository, SystemGitClient};
@@ -352,6 +352,7 @@ impl ShowWipCommand {
         if !repo.is_bare().unwrap_or(false) {
             return Ok(RepoResult {
                 name: repo_name,
+                path: PathBuf::from(&repo_path),
                 worktrees: Vec::new(),
             });
         }
@@ -362,6 +363,7 @@ impl ShowWipCommand {
         if worktrees.is_empty() {
             return Ok(RepoResult {
                 name: repo_name,
+                path: PathBuf::from(&repo_path),
                 worktrees: Vec::new(),
             });
         }
@@ -394,6 +396,7 @@ impl ShowWipCommand {
 
         Ok(RepoResult {
             name: repo_name,
+            path: PathBuf::from(&repo_path),
             worktrees: worktree_results,
         })
     }

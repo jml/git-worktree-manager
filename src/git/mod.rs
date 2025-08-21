@@ -14,6 +14,7 @@ pub trait GitClient {
     fn get_last_commit_timestamp(&self, path: &str, branch: &str) -> Result<i64>;
     fn check_remote_branch_exists(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
+    fn remove_worktree(&self, path: &str, worktree_path: &str) -> Result<()>;
 }
 
 /// Default implementation using system git command
@@ -126,6 +127,19 @@ impl GitClient for SystemGitClient {
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| anyhow!("Failed to get timestamp: {}", e))?;
         Ok(timestamp.as_secs() as i64)
+    }
+
+    fn remove_worktree(&self, path: &str, worktree_path: &str) -> Result<()> {
+        let output = Command::new("git")
+            .args(["-C", path, "worktree", "remove", "--force", worktree_path])
+            .output()?;
+
+        if output.status.success() {
+            Ok(())
+        } else {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(anyhow!("Git worktree remove failed: {}", stderr))
+        }
     }
 }
 
@@ -393,5 +407,16 @@ impl<T: GitClient> GitRepository<T> {
 
     pub fn get_directory_mtime(&self, worktree_path: &str) -> Result<i64> {
         self.git_client.get_directory_mtime(worktree_path)
+    }
+
+    pub fn remove_worktree(&self, branch_name: &str) -> Result<()> {
+        // First we need to find the worktree path for this branch
+        let worktrees = self.list_worktrees()?;
+        let worktree = worktrees
+            .iter()
+            .find(|wt| wt.branch == branch_name)
+            .ok_or_else(|| anyhow!("Worktree for branch '{}' not found", branch_name))?;
+
+        self.git_client.remove_worktree(&self.path, &worktree.path)
     }
 }

@@ -1,4 +1,5 @@
 use crate::git::{LocalStatus, MergeStatus, RemoteStatus};
+use std::path::PathBuf;
 
 /// Pure functional core for worktree status computation
 /// This module contains no I/O operations - only data transformations and business logic
@@ -22,6 +23,7 @@ pub struct WorktreeResult {
 #[derive(Debug, Clone)]
 pub struct RepoResult {
     pub name: String,
+    pub path: PathBuf,
     pub worktrees: Vec<WorktreeResult>,
 }
 
@@ -348,6 +350,7 @@ impl WorktreeAnalyzer {
             if !filtered_worktrees.is_empty() {
                 filtered_results.push(RepoResult {
                     name: repo_result.name.clone(),
+                    path: repo_result.path.clone(),
                     worktrees: filtered_worktrees,
                 });
             }
