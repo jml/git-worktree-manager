@@ -6,7 +6,8 @@ mod core;
 mod git;
 mod output;
 
-use commands::prune::PruneCommand;
+use commands::cleanup::CleanupCommand;
+use commands::remove::RemoveCommand;
 use commands::show_wip::ShowWipCommand;
 
 #[derive(Parser)]
@@ -23,9 +24,12 @@ pub enum Commands {
     /// Show all work-in-progress (non-main) worktrees with comprehensive status
     #[command(name = "show-wip")]
     ShowWip(ShowWipCommand),
-    /// Remove worktree branches that are candidates for pruning
-    #[command(name = "prune")]
-    Prune(PruneCommand),
+    /// Clean up worktree branches that are candidates for removal
+    #[command(name = "cleanup")]
+    Cleanup(CleanupCommand),
+    /// Remove a specific worktree branch
+    #[command(name = "remove")]
+    Remove(RemoveCommand),
 }
 
 #[tokio::main]
@@ -34,6 +38,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Commands::ShowWip(cmd) => cmd.execute().await,
-        Commands::Prune(cmd) => cmd.execute().await,
+        Commands::Cleanup(cmd) => cmd.execute().await,
+        Commands::Remove(cmd) => cmd.execute().await,
     }
 }

@@ -10,13 +10,13 @@ use crate::git::{GitRepository, LocalStatus, RemoteStatus, SystemGitClient};
 use crate::output::table;
 
 #[derive(Args)]
-pub struct PruneCommand {
+pub struct CleanupCommand {
     /// Directory to search for repositories (defaults to current directory)
     /// Can also be set via GWM_REPOS_PATH environment variable
     #[arg(short, long, env = "GWM_REPOS_PATH")]
     path: Option<String>,
 
-    /// Show what would be pruned without actually removing anything
+    /// Show what would be cleaned up without actually removing anything
     #[arg(long)]
     dry_run: bool,
 
@@ -28,7 +28,7 @@ pub struct PruneCommand {
     #[arg(long)]
     allow_unpushed: bool,
 
-    /// Use custom filter instead of default prune candidates
+    /// Use custom filter instead of default cleanup candidates
     /// If not specified, uses the prune-candidates preset filter
     #[arg(long)]
     custom_filter: bool,
@@ -45,7 +45,7 @@ pub struct PruneCommand {
     older_than: Option<String>,
 }
 
-impl PruneCommand {
+impl CleanupCommand {
     fn build_filter(&self) -> Result<WorktreeFilter> {
         if self.custom_filter {
             let mut filter = WorktreeFilter::new();
@@ -69,11 +69,18 @@ impl PruneCommand {
         }
     }
 
+    /// Validate command line arguments
+    fn validate_args(&self) -> Result<()> {
+        Ok(())
+    }
+
     pub async fn execute(&self) -> Result<()> {
+        self.validate_args()?;
+
         let search_path = self.path.as_deref().unwrap_or(".");
         let filter = self.build_filter()?;
 
-        // Find all repositories and get prune candidates
+        // Find all repositories and get cleanup candidates
         let repo_tasks = self.collect_repositories(search_path).await?;
         let repo_task_results = try_join_all(repo_tasks).await?;
 
@@ -82,16 +89,16 @@ impl PruneCommand {
             repo_results.push(task_result?);
         }
 
-        // Apply filtering to get prune candidates
+        // Apply filtering to get cleanup candidates
         let candidates = WorktreeAnalyzer::filter_results(&repo_results, &filter);
 
         if candidates.is_empty() {
-            println!("No worktrees found matching prune criteria.");
+            println!("No worktrees found matching cleanup criteria.");
             return Ok(());
         }
 
         // Show candidates table
-        println!("Prune candidates:");
+        println!("Cleanup candidates:");
         let table_output = table::create_table(&candidates, true);
         println!("{}", table_output);
         println!();
@@ -99,7 +106,7 @@ impl PruneCommand {
         // Perform safety checks
         let unsafe_branches = self.find_unsafe_branches(&candidates).await?;
         if !unsafe_branches.is_empty() && !self.allow_unpushed {
-            println!("⚠️  The following branches have safety concerns and won't be pruned:");
+            println!("⚠️  The following branches have safety concerns and won't be cleaned up:");
             for (repo, branch, reason) in &unsafe_branches {
                 println!("  {}/{}: {}", repo, branch, reason);
             }
@@ -123,7 +130,7 @@ impl PruneCommand {
         let total_count: usize = safe_candidates.iter().map(|r| r.worktrees.len()).sum();
 
         if self.dry_run {
-            println!("🔍 DRY RUN: Would prune {} worktree(s)", total_count);
+            println!("🔍 DRY RUN: Would clean up {} worktree(s)", total_count);
             return Ok(());
         }
 
@@ -142,9 +149,9 @@ impl PruneCommand {
         }
 
         // Perform the actual pruning
-        self.prune_worktrees(&safe_candidates).await?;
+        self.cleanup_worktrees(&safe_candidates).await?;
 
-        println!("✅ Successfully pruned {} worktree(s)", total_count);
+        println!("✅ Successfully cleaned up {} worktree(s)", total_count);
         Ok(())
     }
 
@@ -184,7 +191,7 @@ impl PruneCommand {
 
                 // Check if worktree directory is missing
                 if matches!(worktree.status.local_status, LocalStatus::Missing) {
-                    // This is actually safe to prune, since directory is already gone
+                    // This is actually safe to clean up, since directory is already gone
                     continue;
                 }
             }
@@ -223,12 +230,12 @@ impl PruneCommand {
         filtered_results
     }
 
-    async fn prune_worktrees(&self, candidates: &[RepoResult]) -> Result<()> {
+    async fn cleanup_worktrees(&self, candidates: &[RepoResult]) -> Result<()> {
         for repo_result in candidates {
             let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient);
 
             for worktree in &repo_result.worktrees {
-                println!("🗑️  Pruning {}/{}", repo_result.name, worktree.branch);
+                println!("🗑️  Cleaning up {}/{}", repo_result.name, worktree.branch);
 
                 // Remove the worktree
                 repo.remove_worktree(&worktree.branch)?;
