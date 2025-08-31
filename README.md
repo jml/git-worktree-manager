@@ -24,17 +24,23 @@ sudo cp target/release/git-worktree-manager /usr/local/bin/
 Once installed, you can use it as a git subcommand:
 
 ```bash
-git worktree-manager show-wip
+git worktree-manager
+# or explicitly:
+git worktree-manager list
 ```
 
 ## Usage
 
-### Show Work in Progress
+### List Work in Progress
 
 Display all work-in-progress (non-main) worktrees across repositories:
 
 ```bash
-git-worktree-manager show-wip
+# Default command - just run without subcommand:
+git-worktree-manager
+
+# Or explicitly use the list subcommand:
+git-worktree-manager list
 ```
 
 Options:
@@ -91,5 +97,9 @@ This tool is designed to be extensible with additional worktree management featu
 ```bash
 cargo build
 cargo test
-cargo run -- show-wip
+# Default behavior:
+cargo run
+
+# Or explicitly:
+cargo run -- list
 ```

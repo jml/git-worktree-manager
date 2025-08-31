@@ -9,7 +9,7 @@ use crate::git::{GitRepository, SystemGitClient};
 use crate::output::table;
 
 #[derive(Args)]
-pub struct ShowWipCommand {
+pub struct ListCommand {
     /// Directory to search for repositories (defaults to current directory)
     /// Can also be set via GWM_REPOS_PATH environment variable
     #[arg(short, long, env = "GWM_REPOS_PATH")]
@@ -86,7 +86,7 @@ pub struct ShowWipCommand {
     newer_than: Option<String>,
 }
 
-impl ShowWipCommand {
+impl ListCommand {
     /// Build a WorktreeFilter from command line arguments
     fn build_filter(&self) -> Result<WorktreeFilter> {
         // Handle preset filters first (they override individual filters)
