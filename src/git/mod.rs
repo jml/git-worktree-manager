@@ -12,12 +12,6 @@ pub trait GitClient {
     fn get_status_branch(&self, repo: &Repository) -> Result<String>;
     fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool>;
     fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64>;
-    fn check_remote_branch_exists(
-        &self,
-        repo: &Repository,
-        remote: &str,
-        branch: &str,
-    ) -> Result<bool>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
     fn remove_worktree(&self, repo: &Repository, worktree_path: &str) -> Result<()>;
 }
@@ -199,35 +193,6 @@ impl GitClient for SystemGitClient {
             .as_commit()
             .ok_or_else(|| anyhow!("Object is not a commit"))?;
         Ok(commit.time().seconds())
-    }
-
-    fn check_remote_branch_exists(
-        &self,
-        repo: &Repository,
-        remote: &str,
-        branch: &str,
-    ) -> Result<bool> {
-        // Try to fetch from remote to get latest references
-        if let Ok(mut remote_obj) = repo.find_remote(remote) {
-            let callbacks = git2::RemoteCallbacks::new();
-
-            // Attempt to connect and get remote refs
-            if remote_obj
-                .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
-                .is_ok()
-            {
-                let refs = remote_obj.list()?;
-                let target_ref = format!("refs/heads/{}", branch);
-                for remote_head in refs {
-                    if remote_head.name() == target_ref {
-                        remote_obj.disconnect()?;
-                        return Ok(true);
-                    }
-                }
-                remote_obj.disconnect()?;
-            }
-        }
-        Ok(false)
     }
 
     fn get_directory_mtime(&self, path: &str) -> Result<i64> {
@@ -513,12 +478,12 @@ impl<T: GitClient> GitRepository<T> {
 
         let days_old = (now - commit_timestamp) / (24 * 60 * 60);
 
-        // Check if remote branch exists
+        // Check if remote branch exists (using local remote-tracking refs)
         let worktree_repo = Repository::open(worktree_path)
             .map_err(|_| anyhow!("Failed to open worktree repository"))?;
         let remote_exists = self
             .git_client
-            .check_remote_branch_exists(&worktree_repo, "origin", branch_name)
+            .check_remote_branch(&worktree_repo, "origin", branch_name)
             .unwrap_or(false);
 
         match (remote_exists, days_old) {
