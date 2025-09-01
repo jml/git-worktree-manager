@@ -232,7 +232,7 @@ impl CleanupCommand {
 
     async fn cleanup_worktrees(&self, candidates: &[RepoResult]) -> Result<()> {
         for repo_result in candidates {
-            let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient);
+            let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient)?;
 
             for worktree in &repo_result.worktrees {
                 println!("🗑️  Cleaning up {}/{}", repo_result.name, worktree.branch);
@@ -281,7 +281,7 @@ impl CleanupCommand {
             .unwrap_or("unknown")
             .to_string();
 
-        let repo = GitRepository::new(&repo_path, SystemGitClient);
+        let repo = GitRepository::new(&repo_path, SystemGitClient)?;
 
         // Check if it's a bare repository
         if !repo.is_bare().unwrap_or(false) {

@@ -1,123 +1,233 @@
 use anyhow::{Result, anyhow};
+use git2::{BranchType, Repository, StatusOptions, WorktreePruneOptions};
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 /// Trait for abstracting Git command operations
 pub trait GitClient {
-    fn get_config(&self, path: &str, key: &str) -> Result<String>;
-    fn list_worktrees(&self, path: &str) -> Result<String>;
-    fn get_status_porcelain(&self, path: &str) -> Result<String>;
-    fn get_status_branch(&self, path: &str) -> Result<String>;
-    fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
-    fn get_last_commit_timestamp(&self, path: &str, branch: &str) -> Result<i64>;
-    fn check_remote_branch_exists(&self, path: &str, remote: &str, branch: &str) -> Result<bool>;
+    fn get_config(&self, repo: &Repository, key: &str) -> Result<String>;
+    fn list_worktrees(&self, repo: &Repository) -> Result<String>;
+    fn get_status_porcelain(&self, repo: &Repository) -> Result<String>;
+    fn get_status_branch(&self, repo: &Repository) -> Result<String>;
+    fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool>;
+    fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64>;
+    fn check_remote_branch_exists(
+        &self,
+        repo: &Repository,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
-    fn remove_worktree(&self, path: &str, worktree_path: &str) -> Result<()>;
+    fn remove_worktree(&self, repo: &Repository, worktree_path: &str) -> Result<()>;
 }
 
 /// Default implementation using system git command
 pub struct SystemGitClient;
 
 impl GitClient for SystemGitClient {
-    fn get_config(&self, path: &str, key: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", path, "config", "--get", key])
-            .output()?;
+    fn get_config(&self, repo: &Repository, key: &str) -> Result<String> {
+        let config = repo
+            .config()
+            .map_err(|e| anyhow!("Failed to open git config: {}", e))?;
+        let value = config
+            .get_string(key)
+            .map_err(|e| anyhow!("Failed to get config value for '{}': {}", key, e))?;
+        Ok(value)
+    }
 
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    fn list_worktrees(&self, repo: &Repository) -> Result<String> {
+        let worktrees = repo
+            .worktrees()
+            .map_err(|e| anyhow!("Failed to list worktrees: {}", e))?;
+        let mut result = String::new();
+
+        for worktree_name in worktrees.iter().flatten() {
+            if let Ok(worktree) = repo.find_worktree(worktree_name) {
+                let path = worktree.path();
+                if path.exists() {
+                    let path_str = path.to_string_lossy();
+
+                    // Try to get the current branch for this worktree
+                    if let Ok(wt_repo) = Repository::open(path) {
+                        if let Ok(head) = wt_repo.head() {
+                            if let Some(branch_name) = head.shorthand() {
+                                result.push_str(&format!("{} [{}]\n", path_str, branch_name));
+                            } else {
+                                result.push_str(&format!("{} [detached]\n", path_str));
+                            }
+                        } else {
+                            result.push_str(&format!("{} [unknown]\n", path_str));
+                        }
+                    } else {
+                        result.push_str(&format!("{} [missing]\n", path_str));
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn get_status_porcelain(&self, repo: &Repository) -> Result<String> {
+        let mut opts = StatusOptions::new();
+        opts.include_untracked(true);
+        opts.include_ignored(false);
+
+        let statuses = repo
+            .statuses(Some(&mut opts))
+            .map_err(|e| anyhow!("Failed to get repository status: {}", e))?;
+
+        let mut result = String::new();
+        for entry in statuses.iter() {
+            let flags = entry.status();
+            let path = entry.path().unwrap_or("<unknown>");
+
+            let mut status_chars = [' ', ' '];
+
+            // Index status (first character)
+            if flags.contains(git2::Status::INDEX_NEW) {
+                status_chars[0] = 'A';
+            } else if flags.contains(git2::Status::INDEX_MODIFIED) {
+                status_chars[0] = 'M';
+            } else if flags.contains(git2::Status::INDEX_DELETED) {
+                status_chars[0] = 'D';
+            } else if flags.contains(git2::Status::INDEX_RENAMED) {
+                status_chars[0] = 'R';
+            } else if flags.contains(git2::Status::INDEX_TYPECHANGE) {
+                status_chars[0] = 'T';
+            }
+
+            // Working tree status (second character)
+            if flags.contains(git2::Status::WT_NEW) {
+                status_chars[1] = '?';
+            } else if flags.contains(git2::Status::WT_MODIFIED) {
+                status_chars[1] = 'M';
+            } else if flags.contains(git2::Status::WT_DELETED) {
+                status_chars[1] = 'D';
+            } else if flags.contains(git2::Status::WT_RENAMED) {
+                status_chars[1] = 'R';
+            } else if flags.contains(git2::Status::WT_TYPECHANGE) {
+                status_chars[1] = 'T';
+            }
+
+            if status_chars[0] != ' ' || status_chars[1] != ' ' {
+                result.push_str(&format!(
+                    "{}{} {}\n",
+                    status_chars[0], status_chars[1], path
+                ));
+            }
+        }
+
+        Ok(result)
+    }
+
+    fn get_status_branch(&self, repo: &Repository) -> Result<String> {
+        let head = repo
+            .head()
+            .map_err(|e| anyhow!("Failed to get HEAD: {}", e))?;
+        let mut result = String::new();
+
+        if let Some(branch_name) = head.shorthand() {
+            // Get the upstream branch if it exists
+            if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
+                if let Ok(upstream) = branch.upstream() {
+                    let upstream_name = upstream.name().unwrap_or(None).unwrap_or("unknown");
+
+                    // Calculate ahead/behind counts
+                    if let (Some(local_oid), Some(upstream_oid)) =
+                        (head.target(), upstream.get().target())
+                    {
+                        let (ahead, behind) = repo
+                            .graph_ahead_behind(local_oid, upstream_oid)
+                            .unwrap_or((0, 0));
+
+                        if ahead > 0 && behind > 0 {
+                            result.push_str(&format!(
+                                "## {}...{} [ahead {}, behind {}]\n",
+                                branch_name, upstream_name, ahead, behind
+                            ));
+                        } else if ahead > 0 {
+                            result.push_str(&format!(
+                                "## {}...{} [ahead {}]\n",
+                                branch_name, upstream_name, ahead
+                            ));
+                        } else if behind > 0 {
+                            result.push_str(&format!(
+                                "## {}...{} [behind {}]\n",
+                                branch_name, upstream_name, behind
+                            ));
+                        } else {
+                            result.push_str(&format!("## {}...{}\n", branch_name, upstream_name));
+                        }
+                    } else {
+                        result.push_str(&format!("## {}...{}\n", branch_name, upstream_name));
+                    }
+                } else {
+                    // No upstream branch
+                    result.push_str(&format!("## {}\n", branch_name));
+                }
+            } else {
+                result.push_str(&format!("## {}\n", branch_name));
+            }
         } else {
-            Err(anyhow!("Git config command failed"))
+            result.push_str("## (no branch)\n");
+        }
+
+        // Add the file status entries
+        let status_output = self.get_status_porcelain(repo)?;
+        result.push_str(&status_output);
+
+        Ok(result)
+    }
+
+    fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool> {
+        // Try to find the remote reference
+        let remote_ref = format!("refs/remotes/{}/{}", remote, branch);
+        match repo.find_reference(&remote_ref) {
+            Ok(_) => Ok(true),
+            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(false),
+            Err(e) => Err(anyhow!("Failed to check remote branch: {}", e)),
         }
     }
 
-    fn list_worktrees(&self, path: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", path, "worktree", "list"])
-            .output()?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(anyhow!("Git worktree list failed"))
-        }
+    fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64> {
+        let obj = repo
+            .revparse_single(branch)
+            .map_err(|e| anyhow!("Failed to find branch '{}': {}", branch, e))?;
+        let commit = obj
+            .as_commit()
+            .ok_or_else(|| anyhow!("Object is not a commit"))?;
+        Ok(commit.time().seconds())
     }
 
-    fn get_status_porcelain(&self, path: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", path, "status", "--porcelain"])
-            .output()?;
+    fn check_remote_branch_exists(
+        &self,
+        repo: &Repository,
+        remote: &str,
+        branch: &str,
+    ) -> Result<bool> {
+        // Try to fetch from remote to get latest references
+        if let Ok(mut remote_obj) = repo.find_remote(remote) {
+            let callbacks = git2::RemoteCallbacks::new();
 
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(anyhow!("Git status failed"))
+            // Attempt to connect and get remote refs
+            if remote_obj
+                .connect_auth(git2::Direction::Fetch, Some(callbacks), None)
+                .is_ok()
+            {
+                let refs = remote_obj.list()?;
+                let target_ref = format!("refs/heads/{}", branch);
+                for remote_head in refs {
+                    if remote_head.name() == target_ref {
+                        remote_obj.disconnect()?;
+                        return Ok(true);
+                    }
+                }
+                remote_obj.disconnect()?;
+            }
         }
-    }
-
-    fn get_status_branch(&self, path: &str) -> Result<String> {
-        let output = Command::new("git")
-            .args(["-C", path, "status", "--porcelain=v1", "--branch"])
-            .output()?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).to_string())
-        } else {
-            Err(anyhow!("Git status branch failed"))
-        }
-    }
-
-    fn check_remote_branch(&self, path: &str, remote: &str, branch: &str) -> Result<bool> {
-        let output = Command::new("git")
-            .args([
-                "-C",
-                path,
-                "ls-remote",
-                "--exit-code",
-                "--heads",
-                remote,
-                branch,
-            ])
-            .output()?;
-
-        Ok(output.status.success())
-    }
-
-    fn get_last_commit_timestamp(&self, path: &str, branch: &str) -> Result<i64> {
-        let output = Command::new("git")
-            .args(["-C", path, "log", "-1", "--format=%ct", branch])
-            .output()?;
-
-        if output.status.success() {
-            let timestamp_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            timestamp_str
-                .parse::<i64>()
-                .map_err(|e| anyhow!("Failed to parse timestamp: {}", e))
-        } else {
-            Err(anyhow!("Git log command failed"))
-        }
-    }
-
-    fn check_remote_branch_exists(&self, path: &str, remote: &str, branch: &str) -> Result<bool> {
-        let output = Command::new("git")
-            .args([
-                "-C",
-                path,
-                "ls-remote",
-                "--heads",
-                remote,
-                &format!("refs/heads/{}", branch),
-            ])
-            .output()?;
-
-        if output.status.success() {
-            let output_str = String::from_utf8_lossy(&output.stdout);
-            Ok(!output_str.trim().is_empty())
-        } else {
-            Ok(false)
-        }
+        Ok(false)
     }
 
     fn get_directory_mtime(&self, path: &str) -> Result<i64> {
@@ -129,17 +239,30 @@ impl GitClient for SystemGitClient {
         Ok(timestamp.as_secs() as i64)
     }
 
-    fn remove_worktree(&self, path: &str, worktree_path: &str) -> Result<()> {
-        let output = Command::new("git")
-            .args(["-C", path, "worktree", "remove", "--force", worktree_path])
-            .output()?;
+    fn remove_worktree(&self, repo: &Repository, worktree_path: &str) -> Result<()> {
+        let worktree_name = std::path::Path::new(worktree_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow!("Invalid worktree path: {}", worktree_path))?;
 
-        if output.status.success() {
-            Ok(())
+        if let Ok(worktree) = repo.find_worktree(worktree_name) {
+            // Configure prune options equivalent to --force
+            let mut prune_opts = WorktreePruneOptions::new();
+            prune_opts.valid(true); // Prune even if valid (--force equivalent)
+            prune_opts.working_tree(true); // Remove the working tree directory
+
+            worktree
+                .prune(Some(&mut prune_opts))
+                .map_err(|e| anyhow!("Failed to prune worktree: {}", e))?;
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(anyhow!("Git worktree remove failed: {}", stderr))
+            // If worktree not found in git metadata but directory exists, just remove it
+            if std::path::Path::new(worktree_path).exists() {
+                std::fs::remove_dir_all(worktree_path)
+                    .map_err(|e| anyhow!("Failed to remove worktree directory: {}", e))?;
+            }
         }
+
+        Ok(())
     }
 }
 
@@ -217,27 +340,29 @@ impl Display for MergeStatus {
 }
 
 pub struct GitRepository<T: GitClient> {
-    pub path: String,
     git_client: T,
+    repository: Repository,
 }
 
 impl<T: GitClient> GitRepository<T> {
-    pub fn new(path: &str, git_client: T) -> Self {
-        Self {
-            path: path.to_string(),
+    pub fn new(path: &str, git_client: T) -> Result<Self> {
+        let repository = Repository::open(path)
+            .map_err(|e| anyhow!("Failed to open repository at '{}': {}", path, e))?;
+        Ok(Self {
             git_client,
-        }
+            repository,
+        })
     }
 
     pub fn is_bare(&self) -> Result<bool> {
-        match self.git_client.get_config(&self.path, "core.bare") {
+        match self.git_client.get_config(&self.repository, "core.bare") {
             Ok(config_value) => Ok(config_value.trim() == "true"),
             Err(_) => Ok(false),
         }
     }
 
     pub fn list_worktrees(&self) -> Result<Vec<WorktreeInfo>> {
-        let worktrees_output = match self.git_client.list_worktrees(&self.path) {
+        let worktrees_output = match self.git_client.list_worktrees(&self.repository) {
             Ok(output) => output,
             Err(_) => return Ok(vec![]),
         };
@@ -277,7 +402,9 @@ impl<T: GitClient> GitRepository<T> {
             return Ok(LocalStatus::Missing);
         }
 
-        let status_output = match self.git_client.get_status_porcelain(worktree_path) {
+        let worktree_repo = Repository::open(worktree_path)
+            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
+        let status_output = match self.git_client.get_status_porcelain(&worktree_repo) {
             Ok(output) => output,
             Err(_) => return Ok(LocalStatus::Missing),
         };
@@ -310,7 +437,9 @@ impl<T: GitClient> GitRepository<T> {
             return Ok(RemoteStatus::NoRemote);
         }
 
-        let status_output = match self.git_client.get_status_branch(worktree_path) {
+        let worktree_repo = Repository::open(worktree_path)
+            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
+        let status_output = match self.git_client.get_status_branch(&worktree_repo) {
             Ok(output) => output,
             Err(_) => return Ok(RemoteStatus::NoRemote),
         };
@@ -327,7 +456,7 @@ impl<T: GitClient> GitRepository<T> {
             // No upstream tracking - check if branch exists on remote
             match self
                 .git_client
-                .check_remote_branch(worktree_path, "origin", branch_name)
+                .check_remote_branch(&worktree_repo, "origin", branch_name)
             {
                 Ok(true) => Ok(RemoteStatus::NotTracking),
                 Ok(false) | Err(_) => Ok(RemoteStatus::NotPushed),
@@ -385,9 +514,11 @@ impl<T: GitClient> GitRepository<T> {
         let days_old = (now - commit_timestamp) / (24 * 60 * 60);
 
         // Check if remote branch exists
+        let worktree_repo = Repository::open(worktree_path)
+            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
         let remote_exists = self
             .git_client
-            .check_remote_branch_exists(worktree_path, "origin", branch_name)
+            .check_remote_branch_exists(&worktree_repo, "origin", branch_name)
             .unwrap_or(false);
 
         match (remote_exists, days_old) {
@@ -401,8 +532,10 @@ impl<T: GitClient> GitRepository<T> {
     }
 
     pub fn get_last_commit_timestamp(&self, worktree_path: &str, branch_name: &str) -> Result<i64> {
+        let worktree_repo = Repository::open(worktree_path)
+            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
         self.git_client
-            .get_last_commit_timestamp(worktree_path, branch_name)
+            .get_last_commit_timestamp(&worktree_repo, branch_name)
     }
 
     pub fn get_directory_mtime(&self, worktree_path: &str) -> Result<i64> {
@@ -417,6 +550,7 @@ impl<T: GitClient> GitRepository<T> {
             .find(|wt| wt.branch == branch_name)
             .ok_or_else(|| anyhow!("Worktree for branch '{}' not found", branch_name))?;
 
-        self.git_client.remove_worktree(&self.path, &worktree.path)
+        self.git_client
+            .remove_worktree(&self.repository, &worktree.path)
     }
 }

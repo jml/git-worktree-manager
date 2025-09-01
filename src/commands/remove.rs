@@ -82,7 +82,7 @@ impl RemoveCommand {
         }
 
         // Perform the removal
-        let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient);
+        let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient)?;
         println!(
             "🗑️  Removing {}/{}",
             repo_result.name, worktree_result.branch
@@ -149,7 +149,7 @@ impl RemoveCommand {
             .unwrap_or("unknown")
             .to_string();
 
-        let repo = GitRepository::new(&repo_path, SystemGitClient);
+        let repo = GitRepository::new(&repo_path, SystemGitClient)?;
 
         // Check if it's a bare repository
         if !repo.is_bare().unwrap_or(false) {
