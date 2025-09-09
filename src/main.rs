@@ -9,6 +9,7 @@ mod output;
 use commands::cleanup::CleanupCommand;
 use commands::list::ListCommand;
 use commands::remove::RemoveCommand;
+use commands::sync::SyncCommand;
 
 #[derive(Parser)]
 #[command(name = "git-worktree-manager")]
@@ -33,6 +34,9 @@ pub enum Commands {
     /// Remove a specific worktree branch
     #[command(name = "remove")]
     Remove(RemoveCommand),
+    /// Fetch remotes for all repositories in parallel
+    #[command(name = "sync")]
+    Sync(SyncCommand),
 }
 
 #[tokio::main]
@@ -43,6 +47,7 @@ async fn main() -> Result<()> {
         Some(Commands::List(cmd)) => cmd.execute().await,
         Some(Commands::Cleanup(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
+        Some(Commands::Sync(cmd)) => cmd.execute().await,
         None => cli.list.execute().await,
     }
 }

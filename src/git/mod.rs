@@ -14,6 +14,7 @@ pub trait GitClient {
     fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
     fn remove_worktree(&self, repo: &Repository, worktree_path: &str) -> Result<()>;
+    fn fetch_remotes(&self, repo: &Repository) -> Result<()>;
 }
 
 /// Default implementation using system git command
@@ -224,6 +225,31 @@ impl GitClient for SystemGitClient {
             if std::path::Path::new(worktree_path).exists() {
                 std::fs::remove_dir_all(worktree_path)
                     .map_err(|e| anyhow!("Failed to remove worktree directory: {}", e))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn fetch_remotes(&self, repo: &Repository) -> Result<()> {
+        let remotes = repo
+            .remotes()
+            .map_err(|e| anyhow!("Failed to get remotes: {}", e))?;
+
+        // Set up credentials callback for SSH
+        let mut callbacks = git2::RemoteCallbacks::new();
+        callbacks.credentials(|_url, username_from_url, _allowed_types| {
+            git2::Cred::ssh_key_from_agent(username_from_url.unwrap_or("git"))
+        });
+
+        let mut fetch_options = git2::FetchOptions::new();
+        fetch_options.remote_callbacks(callbacks);
+
+        for remote_name in remotes.iter().flatten() {
+            if let Ok(mut remote) = repo.find_remote(remote_name) {
+                remote
+                    .fetch::<&str>(&[], Some(&mut fetch_options), None)
+                    .map_err(|e| anyhow!("Failed to fetch from remote '{}': {}", remote_name, e))?;
             }
         }
 
@@ -517,5 +543,9 @@ impl<T: GitClient> GitRepository<T> {
 
         self.git_client
             .remove_worktree(&self.repository, &worktree.path)
+    }
+
+    pub fn fetch_remotes(&self) -> Result<()> {
+        self.git_client.fetch_remotes(&self.repository)
     }
 }
