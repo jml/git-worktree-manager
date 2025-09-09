@@ -66,17 +66,6 @@ pub struct ListCommand {
     #[arg(long)]
     up_to_date: bool,
 
-    // Merge status filters
-    /// Show only branches that appear to be merged (likely squash-merged)
-    #[arg(long)]
-    likely_merged: bool,
-    /// Show only branches that are not merged
-    #[arg(long)]
-    not_merged: bool,
-    /// Show only branches with unknown merge status
-    #[arg(long)]
-    unknown_merge: bool,
-
     // Age filters
     /// Show only branches older than the specified time (e.g., 30, 30d, 1w, 2m)
     #[arg(long)]
@@ -138,17 +127,6 @@ impl ListCommand {
         }
         if self.up_to_date {
             filter.up_to_date = Some(true);
-        }
-
-        // Merge status filters
-        if self.likely_merged {
-            filter.likely_merged = Some(true);
-        }
-        if self.not_merged {
-            filter.not_merged = Some(true);
-        }
-        if self.unknown_merge {
-            filter.unknown_merge = Some(true);
         }
 
         // Age filters
@@ -234,9 +212,6 @@ impl ListCommand {
             || self.not_pushed
             || self.not_tracking
             || self.up_to_date
-            || self.likely_merged
-            || self.not_merged
-            || self.unknown_merge
             || self.older_than.is_some()
             || self.newer_than.is_some()
     }
@@ -289,15 +264,6 @@ impl ListCommand {
         }
         if self.up_to_date {
             filters.push("up-to-date".to_string());
-        }
-        if self.likely_merged {
-            filters.push("likely-merged".to_string());
-        }
-        if self.not_merged {
-            filters.push("not-merged".to_string());
-        }
-        if self.unknown_merge {
-            filters.push("unknown-merge".to_string());
         }
 
         if let Some(age) = &self.older_than {
@@ -378,9 +344,9 @@ impl ListCommand {
                 .get_last_commit_timestamp(&worktree.path, &worktree.branch)
                 .unwrap_or(0);
             let directory_mtime = repo.get_directory_mtime(&worktree.path).unwrap_or(0);
-            let merge_status = repo
-                .get_merge_status(&worktree.path, &worktree.branch, commit_timestamp)
-                .unwrap_or(crate::git::MergeStatus::Unknown);
+            let commit_summary = repo
+                .get_commit_summary(&worktree.path, &worktree.branch)
+                .unwrap_or_else(|_| "<no commit>".to_string());
 
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
@@ -389,7 +355,7 @@ impl ListCommand {
                     remote_status,
                     commit_timestamp,
                     directory_mtime,
-                    merge_status,
+                    commit_summary,
                 },
             });
         }

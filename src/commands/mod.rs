@@ -1,3 +1,4 @@
+pub mod add;
 pub mod cleanup;
 pub mod list;
 pub mod remove;

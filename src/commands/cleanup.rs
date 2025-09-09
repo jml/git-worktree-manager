@@ -37,9 +37,6 @@ pub struct CleanupCommand {
     /// Show only branches with clean working directories
     #[arg(long)]
     clean: bool,
-    /// Show only branches that appear to be merged
-    #[arg(long)]
-    likely_merged: bool,
     /// Show only branches older than specified time (e.g., 30, 30d, 1w, 2m)
     #[arg(long)]
     older_than: Option<String>,
@@ -52,9 +49,6 @@ impl CleanupCommand {
 
             if self.clean {
                 filter.clean = Some(true);
-            }
-            if self.likely_merged {
-                filter.likely_merged = Some(true);
             }
             if let Some(age_str) = &self.older_than {
                 let days = WorktreeFilter::parse_age_to_days(age_str)
@@ -313,9 +307,9 @@ impl CleanupCommand {
                 .get_last_commit_timestamp(&worktree.path, &worktree.branch)
                 .unwrap_or(0);
             let directory_mtime = repo.get_directory_mtime(&worktree.path).unwrap_or(0);
-            let merge_status = repo
-                .get_merge_status(&worktree.path, &worktree.branch, commit_timestamp)
-                .unwrap_or(crate::git::MergeStatus::Unknown);
+            let commit_summary = repo
+                .get_commit_summary(&worktree.path, &worktree.branch)
+                .unwrap_or_else(|_| "<no commit>".to_string());
 
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
@@ -324,7 +318,7 @@ impl CleanupCommand {
                     remote_status,
                     commit_timestamp,
                     directory_mtime,
-                    merge_status,
+                    commit_summary,
                 },
             });
         }

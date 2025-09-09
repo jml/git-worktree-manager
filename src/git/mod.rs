@@ -1,5 +1,6 @@
 use anyhow::{Result, anyhow};
-use git2::{BranchType, Repository, StatusOptions, WorktreePruneOptions};
+use git2::build::CheckoutBuilder;
+use git2::{BranchType, Repository, StatusOptions, WorktreeAddOptions, WorktreePruneOptions};
 use std::fmt::Display;
 use std::fs;
 use std::path::Path;
@@ -12,8 +13,16 @@ pub trait GitClient {
     fn get_status_branch(&self, repo: &Repository) -> Result<String>;
     fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool>;
     fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64>;
+    fn get_commit_summary(&self, repo: &Repository, branch: &str) -> Result<String>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
     fn remove_worktree(&self, repo: &Repository, worktree_path: &str) -> Result<()>;
+    fn add_worktree(
+        &self,
+        repo: &Repository,
+        branch: &str,
+        path: &str,
+        base_branch: Option<&str>,
+    ) -> Result<()>;
     fn fetch_remotes(&self, repo: &Repository) -> Result<()>;
 }
 
@@ -196,6 +205,20 @@ impl GitClient for SystemGitClient {
         Ok(commit.time().seconds())
     }
 
+    fn get_commit_summary(&self, repo: &Repository, branch: &str) -> Result<String> {
+        let obj = repo
+            .revparse_single(branch)
+            .map_err(|e| anyhow!("Failed to find branch '{}': {}", branch, e))?;
+        let commit = obj
+            .as_commit()
+            .ok_or_else(|| anyhow!("Object is not a commit"))?;
+
+        // Get the commit summary (first line of the message)
+        let message = commit.summary().unwrap_or("<no message>").to_string();
+
+        Ok(message)
+    }
+
     fn get_directory_mtime(&self, path: &str) -> Result<i64> {
         let metadata = fs::metadata(path)?;
         let mtime = metadata.modified()?;
@@ -226,6 +249,87 @@ impl GitClient for SystemGitClient {
                 std::fs::remove_dir_all(worktree_path)
                     .map_err(|e| anyhow!("Failed to remove worktree directory: {}", e))?;
             }
+        }
+
+        Ok(())
+    }
+
+    fn add_worktree(
+        &self,
+        repo: &Repository,
+        branch: &str,
+        path: &str,
+        base_branch: Option<&str>,
+    ) -> Result<()> {
+        // Check if the target path already exists
+        if std::path::Path::new(path).exists() {
+            return Err(anyhow!("Target path '{}' already exists", path));
+        }
+
+        // Determine the source branch
+        let source_branch = base_branch.unwrap_or("main");
+
+        // Check if the branch already exists locally
+        let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
+
+        if branch_exists {
+            // If branch exists, create worktree from existing branch
+            repo.worktree(branch, Path::new(path), Some(&WorktreeAddOptions::new()))
+                .map_err(|e| anyhow!("Failed to create worktree: {}", e))?;
+        } else {
+            // Check if source branch exists
+            let source_ref =
+                if let Ok(local_branch) = repo.find_branch(source_branch, BranchType::Local) {
+                    local_branch.get().target()
+                } else if let Ok(remote_branch) =
+                    repo.find_branch(&format!("origin/{}", source_branch), BranchType::Remote)
+                {
+                    remote_branch.get().target()
+                } else {
+                    return Err(anyhow!(
+                        "Source branch '{}' not found locally or on remote",
+                        source_branch
+                    ));
+                };
+
+            let source_oid = source_ref.ok_or_else(|| anyhow!("Source branch has no commit"))?;
+            let source_commit = repo
+                .find_commit(source_oid)
+                .map_err(|e| anyhow!("Failed to find source commit: {}", e))?;
+
+            // Create worktree with the source commit
+            repo.worktree(branch, Path::new(path), Some(&WorktreeAddOptions::new()))
+                .map_err(|e| anyhow!("Failed to create worktree: {}", e))?;
+
+            // Open the worktree repository and create/checkout the new branch
+            let worktree_repo = Repository::open(path)
+                .map_err(|e| anyhow!("Failed to open worktree repository: {}", e))?;
+
+            // Create new branch pointing to source commit
+            worktree_repo
+                .branch(branch, &source_commit, false)
+                .map_err(|e| anyhow!("Failed to create branch '{}': {}", branch, e))?;
+
+            // Checkout the new branch
+            let branch_ref = worktree_repo
+                .find_branch(branch, BranchType::Local)
+                .map_err(|e| anyhow!("Failed to find created branch: {}", e))?;
+
+            worktree_repo
+                .checkout_tree(
+                    source_commit.as_object(),
+                    Some(CheckoutBuilder::new().force()),
+                )
+                .map_err(|e| anyhow!("Failed to checkout tree: {}", e))?;
+
+            worktree_repo
+                .set_head(
+                    branch_ref
+                        .get()
+                        .name()
+                        .unwrap_or(&format!("refs/heads/{}", branch)),
+                )
+                .map_err(|e| anyhow!("Failed to set HEAD: {}", e))?;
         }
 
         Ok(())
@@ -282,15 +386,6 @@ pub enum RemoteStatus {
     NoRemote,
 }
 
-#[derive(Debug, Clone)]
-pub enum MergeStatus {
-    #[allow(dead_code)]
-    Merged, // Definitely merged (traditional merge detected)
-    LikelyMerged, // Probably squash merged (remote branch deleted + old)
-    NotMerged,    // Active branch with remote tracking
-    Unknown,      // Cannot determine status
-}
-
 impl Display for LocalStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
@@ -313,18 +408,6 @@ impl Display for RemoteStatus {
             RemoteStatus::NotPushed => "Not pushed".to_string(),
             RemoteStatus::NotTracking => "Not tracking".to_string(),
             RemoteStatus::NoRemote => "No remote".to_string(),
-        };
-        write!(f, "{}", text)
-    }
-}
-
-impl Display for MergeStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            MergeStatus::Merged => "Merged",
-            MergeStatus::LikelyMerged => "Likely merged",
-            MergeStatus::NotMerged => "Not merged",
-            MergeStatus::Unknown => "Unknown",
         };
         write!(f, "{}", text)
     }
@@ -491,42 +574,18 @@ impl<T: GitClient> GitRepository<T> {
         }
     }
 
-    pub fn get_merge_status(
-        &self,
-        worktree_path: &str,
-        branch_name: &str,
-        commit_timestamp: i64,
-    ) -> Result<MergeStatus> {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        let days_old = (now - commit_timestamp) / (24 * 60 * 60);
-
-        // Check if remote branch exists (using local remote-tracking refs)
-        let worktree_repo = Repository::open(worktree_path)
-            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
-        let remote_exists = self
-            .git_client
-            .check_remote_branch(&worktree_repo, "origin", branch_name)
-            .unwrap_or(false);
-
-        match (remote_exists, days_old) {
-            // Remote branch deleted and branch is old - likely squash merged
-            (false, age) if age > 7 => Ok(MergeStatus::LikelyMerged),
-            // Remote exists - probably not merged yet
-            (true, _) => Ok(MergeStatus::NotMerged),
-            // Recent branch with no remote - unknown status
-            _ => Ok(MergeStatus::Unknown),
-        }
-    }
-
     pub fn get_last_commit_timestamp(&self, worktree_path: &str, branch_name: &str) -> Result<i64> {
         let worktree_repo = Repository::open(worktree_path)
             .map_err(|_| anyhow!("Failed to open worktree repository"))?;
         self.git_client
             .get_last_commit_timestamp(&worktree_repo, branch_name)
+    }
+
+    pub fn get_commit_summary(&self, worktree_path: &str, branch_name: &str) -> Result<String> {
+        let worktree_repo = Repository::open(worktree_path)
+            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
+        self.git_client
+            .get_commit_summary(&worktree_repo, branch_name)
     }
 
     pub fn get_directory_mtime(&self, worktree_path: &str) -> Result<i64> {
@@ -543,6 +602,11 @@ impl<T: GitClient> GitRepository<T> {
 
         self.git_client
             .remove_worktree(&self.repository, &worktree.path)
+    }
+
+    pub fn add_worktree(&self, branch: &str, path: &str, base_branch: Option<&str>) -> Result<()> {
+        self.git_client
+            .add_worktree(&self.repository, branch, path, base_branch)
     }
 
     pub fn fetch_remotes(&self) -> Result<()> {

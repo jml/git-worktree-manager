@@ -1,4 +1,4 @@
-use crate::git::{LocalStatus, MergeStatus, RemoteStatus};
+use crate::git::{LocalStatus, RemoteStatus};
 use std::path::PathBuf;
 
 /// Pure functional core for worktree status computation
@@ -11,7 +11,7 @@ pub struct WorktreeStatus {
     pub commit_timestamp: i64,
     #[allow(dead_code)]
     pub directory_mtime: i64,
-    pub merge_status: MergeStatus,
+    pub commit_summary: String,
 }
 
 #[derive(Debug, Clone)]
@@ -116,11 +116,6 @@ pub struct WorktreeFilter {
     pub not_tracking: Option<bool>,
     pub up_to_date: Option<bool>,
 
-    // Merge status filters
-    pub likely_merged: Option<bool>,
-    pub not_merged: Option<bool>,
-    pub unknown_merge: Option<bool>,
-
     // Age filters
     pub older_than_days: Option<u32>,
     pub newer_than_days: Option<u32>,
@@ -177,7 +172,6 @@ impl WorktreeFilter {
     /// Create preset filter for pruning candidates
     pub fn prune_candidates() -> Self {
         Self {
-            likely_merged: Some(true),
             clean: Some(true),
             older_than_days: Some(7),
             ..Default::default()
@@ -187,7 +181,6 @@ impl WorktreeFilter {
     /// Create preset filter for active work
     pub fn active() -> Self {
         Self {
-            not_merged: Some(true),
             newer_than_days: Some(7),
             ..Default::default()
         }
@@ -223,11 +216,6 @@ impl WorktreeFilter {
 
         // Check remote status filters
         if !self.matches_remote_status(&worktree.status.remote_status) {
-            return false;
-        }
-
-        // Check merge status filters
-        if !self.matches_merge_status(&worktree.status.merge_status) {
             return false;
         }
 
@@ -286,22 +274,6 @@ impl WorktreeFilter {
             RemoteStatus::NotTracking => self.not_tracking.unwrap_or(false),
             RemoteStatus::UpToDate => self.up_to_date.unwrap_or(false),
             RemoteStatus::NoRemote => true, // Always include no remote (assume it's not filtered)
-        }
-    }
-
-    fn matches_merge_status(&self, status: &MergeStatus) -> bool {
-        // If no merge status filters are specified, pass everything
-        if self.likely_merged.is_none() && self.not_merged.is_none() && self.unknown_merge.is_none()
-        {
-            return true;
-        }
-
-        // Check if this status matches any of the requested filters
-        match status {
-            MergeStatus::LikelyMerged => self.likely_merged.unwrap_or(false),
-            MergeStatus::NotMerged => self.not_merged.unwrap_or(false),
-            MergeStatus::Unknown => self.unknown_merge.unwrap_or(false),
-            MergeStatus::Merged => true, // Always include explicitly merged
         }
     }
 

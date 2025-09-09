@@ -1,5 +1,5 @@
 use crate::core::{RepoResult, WorktreeResult};
-use crate::git::{LocalStatus, MergeStatus, RemoteStatus};
+use crate::git::{LocalStatus, RemoteStatus};
 use std::fmt::Display;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -34,18 +34,6 @@ impl Display for EmojiStatus<RemoteStatus> {
     }
 }
 
-impl Display for EmojiStatus<MergeStatus> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let emoji = match self.0 {
-            MergeStatus::Merged => "✅",
-            MergeStatus::LikelyMerged => "🤔",
-            MergeStatus::NotMerged => "🚧",
-            MergeStatus::Unknown => "❓",
-        };
-        write!(f, "{} {}", emoji, self.0)
-    }
-}
-
 #[derive(Tabled)]
 pub struct TableRow {
     #[tabled(rename = "Repository")]
@@ -58,8 +46,8 @@ pub struct TableRow {
     pub remote_status: String,
     #[tabled(rename = "Age")]
     pub commit_age: String,
-    #[tabled(rename = "Merge Status")]
-    pub merge_status: String,
+    #[tabled(rename = "Last Commit")]
+    pub commit_summary: String,
 }
 
 impl TableRow {
@@ -78,11 +66,7 @@ impl TableRow {
                 worktree.status.remote_status.to_string()
             },
             commit_age: format_age(worktree.status.commit_timestamp),
-            merge_status: if use_emoji {
-                EmojiStatus(worktree.status.merge_status.clone()).to_string()
-            } else {
-                worktree.status.merge_status.to_string()
-            },
+            commit_summary: worktree.status.commit_summary.clone(),
         }
     }
 }

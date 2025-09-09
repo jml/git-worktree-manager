@@ -181,7 +181,7 @@ impl RemoveCommand {
                     remote_status: crate::git::RemoteStatus::UpToDate, // Placeholder
                     commit_timestamp: 0,                          // Placeholder
                     directory_mtime: 0,                           // Placeholder
-                    merge_status: crate::git::MergeStatus::Unknown, // Placeholder
+                    commit_summary: "<placeholder>".to_string(),  // Placeholder
                 },
             });
         }

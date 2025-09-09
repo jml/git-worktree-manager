@@ -6,6 +6,7 @@ mod core;
 mod git;
 mod output;
 
+use commands::add::AddCommand;
 use commands::cleanup::CleanupCommand;
 use commands::list::ListCommand;
 use commands::remove::RemoveCommand;
@@ -28,6 +29,9 @@ pub enum Commands {
     /// Show all work-in-progress (non-main) worktrees with comprehensive status
     #[command(name = "list")]
     List(ListCommand),
+    /// Add a new worktree branch
+    #[command(name = "add")]
+    Add(AddCommand),
     /// Clean up worktree branches that are candidates for removal
     #[command(name = "cleanup")]
     Cleanup(CleanupCommand),
@@ -45,6 +49,7 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Some(Commands::List(cmd)) => cmd.execute().await,
+        Some(Commands::Add(cmd)) => cmd.execute().await,
         Some(Commands::Cleanup(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
         Some(Commands::Sync(cmd)) => cmd.execute().await,
