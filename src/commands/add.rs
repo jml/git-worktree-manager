@@ -2,7 +2,6 @@ use anyhow::Result;
 use clap::Args;
 use futures::future::try_join_all;
 use std::fs;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use crate::core::RepoResult;
@@ -91,18 +90,6 @@ impl AddCommand {
             return Ok(());
         }
 
-        // Ask for confirmation
-        print!("❓ Create worktree {}/{}? [y/N]: ", self.repo, self.branch);
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        if !input.trim().to_lowercase().starts_with('y') {
-            println!("Cancelled.");
-            return Ok(());
-        }
-
         // Perform the creation
         let repo = GitRepository::new(repo_result.path.to_str().unwrap(), SystemGitClient)?;
         println!("🌟 Creating worktree {}/{}", repo_result.name, self.branch);
@@ -143,13 +130,9 @@ impl AddCommand {
         Ok(false)
     }
 
-    /// Determine the path for the new worktree (sibling to main repo)
+    /// Determine the path for the new worktree (inside the repo directory)
     fn determine_worktree_path(&self, repo_path: &Path) -> Result<PathBuf> {
-        let parent_dir = repo_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Cannot determine parent directory of repository"))?;
-
-        Ok(parent_dir.join(format!("{}-{}", self.repo, self.branch)))
+        Ok(repo_path.join(&self.branch))
     }
 
     async fn collect_repositories(

@@ -16,7 +16,7 @@ An opinionated git worktree management tool.
 git clone <repository-url>
 cd git-worktree-manager
 cargo build --release
-sudo cp target/release/git-worktree-manager /usr/local/bin/
+sudo cp target/release/gwm /usr/local/bin/
 ```
 
 ### As a Git Subcommand
@@ -27,6 +27,80 @@ Once installed, you can use it as a git subcommand:
 git worktree-manager
 # or explicitly:
 git worktree-manager list
+```
+
+### Shell Completion
+
+Enable tab completion for repository and branch names by generating and sourcing completion scripts:
+
+**Features:**
+- Command and flag completion for all gwm commands
+- Dynamic repository name completion for `add` and `remove` commands
+- Dynamic branch name completion based on selected repository
+- Respects `--path` flag and `GWM_REPOS_PATH` environment variable
+
+#### Bash
+
+```bash
+# Generate enhanced completion script with dynamic repo/branch completion
+gwm completion bash > ~/.gwm_completion
+
+# Add to your .bashrc or .bash_profile
+echo "source ~/.gwm_completion" >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Zsh
+
+For zsh, you need to place the completion in your fpath. Here are the most common approaches:
+
+**Option 1: Using ~/.zfunc directory (recommended)**
+```zsh
+# Create completion directory if it doesn't exist
+mkdir -p ~/.zfunc
+
+# Generate completion script
+gwm completion zsh > ~/.zfunc/_gwm
+
+# Add to your .zshrc (add this line before 'compinit' if you have it)
+echo 'fpath=(~/.zfunc $fpath)' >> ~/.zshrc
+echo 'autoload -U compinit && compinit' >> ~/.zshrc
+
+# Reload your shell
+exec zsh
+```
+
+**Option 2: System-wide installation (requires sudo)**
+```zsh
+# Generate and install system-wide (adjust path for your system)
+gwm completion zsh | sudo tee /usr/local/share/zsh/site-functions/_gwm > /dev/null
+
+# Reload completions
+compinit
+```
+
+**Option 3: Using oh-my-zsh custom completions**
+```zsh
+# If you use oh-my-zsh
+gwm completion zsh > ~/.oh-my-zsh/custom/plugins/gwm/_gwm
+# Then add 'gwm' to your plugins list in .zshrc
+```
+
+#### Fish
+
+```bash
+# Generate completion script and place it in fish completions directory
+gwm completion fish > ~/.config/fish/completions/gwm.fish
+```
+
+#### PowerShell
+
+```powershell
+# Generate completion script
+gwm completion powershell > gwm_completion.ps1
+
+# Add to your PowerShell profile
+echo ". gwm_completion.ps1" >> $PROFILE
 ```
 
 ## Usage

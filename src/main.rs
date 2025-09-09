@@ -8,6 +8,9 @@ mod output;
 
 use commands::add::AddCommand;
 use commands::cleanup::CleanupCommand;
+use commands::complete_branches::CompleteBranchesCommand;
+use commands::complete_repos::CompleteReposCommand;
+use commands::completion::CompletionCommand;
 use commands::list::ListCommand;
 use commands::remove::RemoveCommand;
 use commands::sync::SyncCommand;
@@ -41,6 +44,15 @@ pub enum Commands {
     /// Fetch remotes for all repositories in parallel
     #[command(name = "sync")]
     Sync(SyncCommand),
+    /// Generate shell completions
+    #[command(name = "completion")]
+    Completion(CompletionCommand),
+    /// List repository names for completion
+    #[command(name = "complete-repos")]
+    CompleteRepos(CompleteReposCommand),
+    /// List branch names for completion
+    #[command(name = "complete-branches")]
+    CompleteBranches(CompleteBranchesCommand),
 }
 
 #[tokio::main]
@@ -53,6 +65,9 @@ async fn main() -> Result<()> {
         Some(Commands::Cleanup(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
         Some(Commands::Sync(cmd)) => cmd.execute().await,
+        Some(Commands::Completion(cmd)) => cmd.execute().await,
+        Some(Commands::CompleteRepos(cmd)) => cmd.execute().await,
+        Some(Commands::CompleteBranches(cmd)) => cmd.execute().await,
         None => cli.list.execute().await,
     }
 }
