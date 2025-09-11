@@ -27,6 +27,10 @@ pub struct AddCommand {
     /// Show what would be created without actually creating anything
     #[arg(long)]
     dry_run: bool,
+
+    /// Reuse existing branch instead of failing when branch already exists
+    #[arg(long)]
+    reuse: bool,
 }
 
 impl AddCommand {
@@ -98,6 +102,7 @@ impl AddCommand {
             &self.branch,
             worktree_path.to_str().unwrap(),
             self.base_branch.as_deref(),
+            self.reuse,
         )?;
 
         println!(

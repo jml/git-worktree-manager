@@ -22,6 +22,7 @@ pub trait GitClient {
         branch: &str,
         path: &str,
         base_branch: Option<&str>,
+        reuse_existing_branch: bool,
     ) -> Result<()>;
     fn fetch_remotes(&self, repo: &Repository) -> Result<()>;
 }
@@ -260,6 +261,7 @@ impl GitClient for SystemGitClient {
         branch: &str,
         path: &str,
         base_branch: Option<&str>,
+        reuse_existing_branch: bool,
     ) -> Result<()> {
         // Check if the target path already exists
         if std::path::Path::new(path).exists() {
@@ -273,63 +275,149 @@ impl GitClient for SystemGitClient {
         let branch_exists = repo.find_branch(branch, BranchType::Local).is_ok();
 
         if branch_exists {
-            // If branch exists, create worktree from existing branch
-            repo.worktree(branch, Path::new(path), Some(&WorktreeAddOptions::new()))
-                .map_err(|e| anyhow!("Failed to create worktree: {}", e))?;
-        } else {
-            // Check if source branch exists
-            let source_ref =
-                if let Ok(local_branch) = repo.find_branch(source_branch, BranchType::Local) {
-                    local_branch.get().target()
-                } else if let Ok(remote_branch) =
-                    repo.find_branch(&format!("origin/{}", source_branch), BranchType::Remote)
-                {
-                    remote_branch.get().target()
-                } else {
-                    return Err(anyhow!(
-                        "Source branch '{}' not found locally or on remote",
-                        source_branch
-                    ));
-                };
+            // If branch exists but reuse is not enabled, fail with helpful message
+            if !reuse_existing_branch {
+                return Err(anyhow!(
+                    "Branch '{}' already exists. Use --reuse to reuse the existing branch, or choose a different branch name.",
+                    branch
+                ));
+            }
+            // If branch exists, create worktree and check it out to existing branch
+            let worktree_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(branch);
 
-            let source_oid = source_ref.ok_or_else(|| anyhow!("Source branch has no commit"))?;
-            let source_commit = repo
-                .find_commit(source_oid)
-                .map_err(|e| anyhow!("Failed to find source commit: {}", e))?;
+            // Find the existing branch reference to use it for the worktree
+            let branch_ref = repo
+                .find_branch(branch, BranchType::Local)
+                .map_err(|e| anyhow!("Failed to find existing branch '{}': {}", branch, e))?;
 
-            // Create worktree with the source commit
-            repo.worktree(branch, Path::new(path), Some(&WorktreeAddOptions::new()))
+            // Create worktree using the existing branch's commit
+            let mut worktree_opts = WorktreeAddOptions::new();
+            worktree_opts.reference(Some(branch_ref.get()));
+
+            repo.worktree(worktree_name, Path::new(path), Some(&worktree_opts))
                 .map_err(|e| anyhow!("Failed to create worktree: {}", e))?;
 
-            // Open the worktree repository and create/checkout the new branch
+            // Open the worktree repository and verify checkout
             let worktree_repo = Repository::open(path)
                 .map_err(|e| anyhow!("Failed to open worktree repository: {}", e))?;
 
-            // Create new branch pointing to source commit
+            // Checkout the branch (worktree should already be on correct branch)
             worktree_repo
-                .branch(branch, &source_commit, false)
-                .map_err(|e| anyhow!("Failed to create branch '{}': {}", branch, e))?;
+                .checkout_head(Some(CheckoutBuilder::new().force()))
+                .map_err(|e| anyhow!("Failed to checkout existing branch: {}", e))?;
+        } else {
+            // Check if source branch exists before creating worktree
+            if repo.find_branch(source_branch, BranchType::Local).is_err()
+                && repo
+                    .find_branch(&format!("origin/{}", source_branch), BranchType::Remote)
+                    .is_err()
+            {
+                return Err(anyhow!(
+                    "Source branch '{}' not found locally or on remote",
+                    source_branch
+                ));
+            }
+
+            // Create worktree first (this creates it at the default branch/commit)
+            repo.worktree(branch, Path::new(path), Some(&WorktreeAddOptions::new()))
+                .map_err(|e| anyhow!("Failed to create worktree: {}", e))?;
+
+            // From this point on, if we fail, we should clean up the worktree
+            let cleanup_worktree = || {
+                if let Ok(worktree) = repo.find_worktree(branch) {
+                    let mut prune_opts = WorktreePruneOptions::new();
+                    prune_opts.valid(true);
+                    prune_opts.working_tree(true);
+                    let _ = worktree.prune(Some(&mut prune_opts));
+                }
+                if std::path::Path::new(path).exists() {
+                    let _ = std::fs::remove_dir_all(path);
+                }
+            };
+
+            // Open the worktree repository and create/checkout the new branch
+            let worktree_repo = match Repository::open(path) {
+                Ok(repo) => repo,
+                Err(e) => {
+                    cleanup_worktree();
+                    return Err(anyhow!("Failed to open worktree repository: {}", e));
+                }
+            };
+
+            // Now resolve the source commit in the worktree repository context
+            let source_branch_ref = if worktree_repo
+                .find_branch(source_branch, BranchType::Local)
+                .is_ok()
+            {
+                source_branch.to_string()
+            } else if worktree_repo
+                .find_branch(&format!("origin/{}", source_branch), BranchType::Remote)
+                .is_ok()
+            {
+                format!("origin/{}", source_branch)
+            } else {
+                cleanup_worktree();
+                return Err(anyhow!(
+                    "Source branch '{}' not found in worktree repository",
+                    source_branch
+                ));
+            };
+
+            // Resolve the commit in the worktree repository
+            let source_obj = match worktree_repo.revparse_single(&source_branch_ref) {
+                Ok(obj) => obj,
+                Err(e) => {
+                    cleanup_worktree();
+                    return Err(anyhow!(
+                        "Failed to resolve source branch '{}': {}",
+                        source_branch_ref,
+                        e
+                    ));
+                }
+            };
+            let source_commit = match source_obj.as_commit() {
+                Some(commit) => commit,
+                None => {
+                    cleanup_worktree();
+                    return Err(anyhow!("Source reference is not a commit"));
+                }
+            };
+
+            // Create new branch pointing to source commit
+            if let Err(e) = worktree_repo.branch(branch, source_commit, false) {
+                cleanup_worktree();
+                return Err(anyhow!("Failed to create branch '{}': {}", branch, e));
+            }
 
             // Checkout the new branch
-            let branch_ref = worktree_repo
-                .find_branch(branch, BranchType::Local)
-                .map_err(|e| anyhow!("Failed to find created branch: {}", e))?;
+            let branch_ref = match worktree_repo.find_branch(branch, BranchType::Local) {
+                Ok(branch_ref) => branch_ref,
+                Err(e) => {
+                    cleanup_worktree();
+                    return Err(anyhow!("Failed to find created branch: {}", e));
+                }
+            };
 
-            worktree_repo
-                .checkout_tree(
-                    source_commit.as_object(),
-                    Some(CheckoutBuilder::new().force()),
-                )
-                .map_err(|e| anyhow!("Failed to checkout tree: {}", e))?;
+            if let Err(e) = worktree_repo.checkout_tree(
+                source_commit.as_object(),
+                Some(CheckoutBuilder::new().force()),
+            ) {
+                cleanup_worktree();
+                return Err(anyhow!("Failed to checkout tree: {}", e));
+            }
 
-            worktree_repo
-                .set_head(
-                    branch_ref
-                        .get()
-                        .name()
-                        .unwrap_or(&format!("refs/heads/{}", branch)),
-                )
-                .map_err(|e| anyhow!("Failed to set HEAD: {}", e))?;
+            if let Err(e) = worktree_repo.set_head(
+                branch_ref
+                    .get()
+                    .name()
+                    .unwrap_or(&format!("refs/heads/{}", branch)),
+            ) {
+                cleanup_worktree();
+                return Err(anyhow!("Failed to set HEAD: {}", e));
+            }
         }
 
         Ok(())
@@ -604,9 +692,20 @@ impl<T: GitClient> GitRepository<T> {
             .remove_worktree(&self.repository, &worktree.path)
     }
 
-    pub fn add_worktree(&self, branch: &str, path: &str, base_branch: Option<&str>) -> Result<()> {
-        self.git_client
-            .add_worktree(&self.repository, branch, path, base_branch)
+    pub fn add_worktree(
+        &self,
+        branch: &str,
+        path: &str,
+        base_branch: Option<&str>,
+        reuse_existing_branch: bool,
+    ) -> Result<()> {
+        self.git_client.add_worktree(
+            &self.repository,
+            branch,
+            path,
+            base_branch,
+            reuse_existing_branch,
+        )
     }
 
     pub fn fetch_remotes(&self) -> Result<()> {
