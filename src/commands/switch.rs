@@ -50,9 +50,9 @@ impl SwitchCommand {
 
         match worktree_path {
             Some(path) => {
-                // Print the directory path to stdout so it can be used by shell scripts
-                // This enables `cd "$(gwm switch repo branch)"` pattern
-                println!("{}", path.display());
+                // Change to the worktree directory
+                std::env::set_current_dir(&path)?;
+                println!("📁 Changed to {}", path.display());
             }
             None => {
                 eprintln!(
