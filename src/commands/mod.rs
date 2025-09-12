@@ -5,4 +5,5 @@ pub mod complete_repos;
 pub mod completion;
 pub mod list;
 pub mod remove;
+pub mod switch;
 pub mod sync;

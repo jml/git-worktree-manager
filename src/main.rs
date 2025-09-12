@@ -13,6 +13,7 @@ use commands::complete_repos::CompleteReposCommand;
 use commands::completion::CompletionCommand;
 use commands::list::ListCommand;
 use commands::remove::RemoveCommand;
+use commands::switch::SwitchCommand;
 use commands::sync::SyncCommand;
 
 #[derive(Parser)]
@@ -41,6 +42,9 @@ pub enum Commands {
     /// Remove a specific worktree branch
     #[command(name = "remove")]
     Remove(RemoveCommand),
+    /// Switch to a worktree directory
+    #[command(name = "switch")]
+    Switch(SwitchCommand),
     /// Fetch remotes for all repositories in parallel
     #[command(name = "sync")]
     Sync(SyncCommand),
@@ -64,6 +68,7 @@ async fn main() -> Result<()> {
         Some(Commands::Add(cmd)) => cmd.execute().await,
         Some(Commands::Cleanup(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
+        Some(Commands::Switch(cmd)) => cmd.execute().await,
         Some(Commands::Sync(cmd)) => cmd.execute().await,
         Some(Commands::Completion(cmd)) => cmd.execute().await,
         Some(Commands::CompleteRepos(cmd)) => cmd.execute().await,
