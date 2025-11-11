@@ -7,7 +7,6 @@ mod git;
 mod output;
 
 use commands::add::AddCommand;
-use commands::cleanup::CleanupCommand;
 use commands::complete_branches::CompleteBranchesCommand;
 use commands::complete_repos::CompleteReposCommand;
 use commands::completion::CompletionCommand;
@@ -36,9 +35,6 @@ pub enum Commands {
     /// Add a new worktree branch
     #[command(name = "add")]
     Add(AddCommand),
-    /// Clean up worktree branches that are candidates for removal
-    #[command(name = "cleanup")]
-    Cleanup(CleanupCommand),
     /// Remove a specific worktree branch
     #[command(name = "remove")]
     Remove(RemoveCommand),
@@ -66,7 +62,6 @@ async fn main() -> Result<()> {
     match cli.command {
         Some(Commands::List(cmd)) => cmd.execute().await,
         Some(Commands::Add(cmd)) => cmd.execute().await,
-        Some(Commands::Cleanup(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
         Some(Commands::Switch(cmd)) => cmd.execute().await,
         Some(Commands::Sync(cmd)) => cmd.execute().await,

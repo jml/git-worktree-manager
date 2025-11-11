@@ -150,7 +150,6 @@ impl SwitchCommand {
                 branch: worktree.branch.clone(),
                 status: crate::core::WorktreeStatus {
                     local_status: crate::git::LocalStatus::Clean,
-                    remote_status: crate::git::RemoteStatus::UpToDate,
                     commit_timestamp: 0,
                     directory_mtime: 0,
                     commit_summary: "<placeholder>".to_string(),

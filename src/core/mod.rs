@@ -1,4 +1,4 @@
-use crate::git::{LocalStatus, RemoteStatus};
+use crate::git::LocalStatus;
 use std::path::PathBuf;
 
 /// Pure functional core for worktree status computation
@@ -7,7 +7,6 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct WorktreeStatus {
     pub local_status: LocalStatus,
-    pub remote_status: RemoteStatus,
     pub commit_timestamp: i64,
     #[allow(dead_code)]
     pub directory_mtime: i64,
@@ -34,14 +33,6 @@ pub struct StatusCounters {
     pub clean: u32,
     pub dirty: u32,
     pub staged: u32,
-
-    // Remote status counters
-    pub up_to_date: u32,
-    pub ahead: u32,
-    pub behind: u32,
-    pub diverged: u32,
-    pub not_pushed: u32,
-    pub not_tracking: u32,
 }
 
 impl StatusCounters {
@@ -57,17 +48,6 @@ impl StatusCounters {
             LocalStatus::Dirty => self.dirty += 1,
             LocalStatus::Staged => self.staged += 1,
             LocalStatus::Missing => {}
-        }
-
-        // Update remote status counters
-        match status.remote_status {
-            RemoteStatus::UpToDate => self.up_to_date += 1,
-            RemoteStatus::Ahead(_) => self.ahead += 1,
-            RemoteStatus::Behind(_) => self.behind += 1,
-            RemoteStatus::Diverged(_, _) => self.diverged += 1,
-            RemoteStatus::NotPushed => self.not_pushed += 1,
-            RemoteStatus::NotTracking => self.not_tracking += 1,
-            RemoteStatus::NoRemote => {}
         }
     }
 }
@@ -107,14 +87,6 @@ pub struct WorktreeFilter {
     pub clean: Option<bool>,
     pub staged: Option<bool>,
     pub missing: Option<bool>,
-
-    // Remote status filters
-    pub ahead: Option<bool>,
-    pub behind: Option<bool>,
-    pub diverged: Option<bool>,
-    pub not_pushed: Option<bool>,
-    pub not_tracking: Option<bool>,
-    pub up_to_date: Option<bool>,
 
     // Age filters
     pub older_than_days: Option<u32>,
@@ -214,11 +186,6 @@ impl WorktreeFilter {
             return false;
         }
 
-        // Check remote status filters
-        if !self.matches_remote_status(&worktree.status.remote_status) {
-            return false;
-        }
-
         // Check age filters
         if !self.matches_age(worktree.status.commit_timestamp, current_timestamp) {
             return false;
@@ -228,10 +195,7 @@ impl WorktreeFilter {
     }
 
     fn matches_needs_attention(&self, worktree: &WorktreeResult) -> bool {
-        matches!(
-            worktree.status.remote_status,
-            RemoteStatus::Diverged(_, _) | RemoteStatus::Behind(_)
-        ) || matches!(worktree.status.local_status, LocalStatus::Missing)
+        matches!(worktree.status.local_status, LocalStatus::Missing)
     }
 
     fn matches_local_status(&self, status: &LocalStatus) -> bool {
@@ -250,30 +214,6 @@ impl WorktreeFilter {
             LocalStatus::Clean => self.clean.unwrap_or(false),
             LocalStatus::Staged => self.staged.unwrap_or(false),
             LocalStatus::Missing => self.missing.unwrap_or(false),
-        }
-    }
-
-    fn matches_remote_status(&self, status: &RemoteStatus) -> bool {
-        // If no remote status filters are specified, pass everything
-        if self.ahead.is_none()
-            && self.behind.is_none()
-            && self.diverged.is_none()
-            && self.not_pushed.is_none()
-            && self.not_tracking.is_none()
-            && self.up_to_date.is_none()
-        {
-            return true;
-        }
-
-        // Check if this status matches any of the requested filters
-        match status {
-            RemoteStatus::Ahead(_) => self.ahead.unwrap_or(false),
-            RemoteStatus::Behind(_) => self.behind.unwrap_or(false),
-            RemoteStatus::Diverged(_, _) => self.diverged.unwrap_or(false),
-            RemoteStatus::NotPushed => self.not_pushed.unwrap_or(false),
-            RemoteStatus::NotTracking => self.not_tracking.unwrap_or(false),
-            RemoteStatus::UpToDate => self.up_to_date.unwrap_or(false),
-            RemoteStatus::NoRemote => true, // Always include no remote (assume it's not filtered)
         }
     }
 

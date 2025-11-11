@@ -178,7 +178,6 @@ impl RemoveCommand {
                 branch: worktree.branch.clone(),
                 status: crate::core::WorktreeStatus {
                     local_status: crate::git::LocalStatus::Clean, // Placeholder
-                    remote_status: crate::git::RemoteStatus::UpToDate, // Placeholder
                     commit_timestamp: 0,                          // Placeholder
                     directory_mtime: 0,                           // Placeholder
                     commit_summary: "<placeholder>".to_string(),  // Placeholder

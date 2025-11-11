@@ -1,5 +1,5 @@
 use crate::core::{RepoResult, WorktreeResult};
-use crate::git::{LocalStatus, RemoteStatus};
+use crate::git::LocalStatus;
 use std::fmt::Display;
 use tabled::settings::Style;
 use tabled::{Table, Tabled};
@@ -19,21 +19,6 @@ impl Display for EmojiStatus<LocalStatus> {
     }
 }
 
-impl Display for EmojiStatus<RemoteStatus> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let emoji = match self.0 {
-            RemoteStatus::UpToDate => "✅",
-            RemoteStatus::Ahead(_) => "⬆️",
-            RemoteStatus::Behind(_) => "⬇️",
-            RemoteStatus::Diverged(_, _) => "🔀",
-            RemoteStatus::NotPushed => "❌",
-            RemoteStatus::NotTracking => "🔄",
-            RemoteStatus::NoRemote => "❌",
-        };
-        write!(f, "{} {}", emoji, self.0)
-    }
-}
-
 #[derive(Tabled)]
 pub struct TableRow {
     #[tabled(rename = "Repository")]
@@ -42,8 +27,6 @@ pub struct TableRow {
     pub branch: String,
     #[tabled(rename = "Local")]
     pub local_status: String,
-    #[tabled(rename = "Remote")]
-    pub remote_status: String,
     #[tabled(rename = "Age")]
     pub commit_age: String,
     #[tabled(rename = "Last Commit")]
@@ -59,11 +42,6 @@ impl TableRow {
                 EmojiStatus(worktree.status.local_status.clone()).to_string()
             } else {
                 worktree.status.local_status.to_string()
-            },
-            remote_status: if use_emoji {
-                EmojiStatus(worktree.status.remote_status.clone()).to_string()
-            } else {
-                worktree.status.remote_status.to_string()
             },
             commit_age: format_age(worktree.status.commit_timestamp),
             commit_summary: worktree.status.commit_summary.clone(),

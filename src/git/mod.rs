@@ -10,8 +10,6 @@ pub trait GitClient {
     fn get_config(&self, repo: &Repository, key: &str) -> Result<String>;
     fn list_worktrees(&self, repo: &Repository) -> Result<String>;
     fn get_status_porcelain(&self, repo: &Repository) -> Result<String>;
-    fn get_status_branch(&self, repo: &Repository) -> Result<String>;
-    fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool>;
     fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64>;
     fn get_commit_summary(&self, repo: &Repository, branch: &str) -> Result<String>;
     fn get_directory_mtime(&self, path: &str) -> Result<i64>;
@@ -125,75 +123,6 @@ impl GitClient for SystemGitClient {
         }
 
         Ok(result)
-    }
-
-    fn get_status_branch(&self, repo: &Repository) -> Result<String> {
-        let head = repo
-            .head()
-            .map_err(|e| anyhow!("Failed to get HEAD: {}", e))?;
-        let mut result = String::new();
-
-        if let Some(branch_name) = head.shorthand() {
-            // Get the upstream branch if it exists
-            if let Ok(branch) = repo.find_branch(branch_name, BranchType::Local) {
-                if let Ok(upstream) = branch.upstream() {
-                    let upstream_name = upstream.name().unwrap_or(None).unwrap_or("unknown");
-
-                    // Calculate ahead/behind counts
-                    if let (Some(local_oid), Some(upstream_oid)) =
-                        (head.target(), upstream.get().target())
-                    {
-                        let (ahead, behind) = repo
-                            .graph_ahead_behind(local_oid, upstream_oid)
-                            .unwrap_or((0, 0));
-
-                        if ahead > 0 && behind > 0 {
-                            result.push_str(&format!(
-                                "## {}...{} [ahead {}, behind {}]\n",
-                                branch_name, upstream_name, ahead, behind
-                            ));
-                        } else if ahead > 0 {
-                            result.push_str(&format!(
-                                "## {}...{} [ahead {}]\n",
-                                branch_name, upstream_name, ahead
-                            ));
-                        } else if behind > 0 {
-                            result.push_str(&format!(
-                                "## {}...{} [behind {}]\n",
-                                branch_name, upstream_name, behind
-                            ));
-                        } else {
-                            result.push_str(&format!("## {}...{}\n", branch_name, upstream_name));
-                        }
-                    } else {
-                        result.push_str(&format!("## {}...{}\n", branch_name, upstream_name));
-                    }
-                } else {
-                    // No upstream branch
-                    result.push_str(&format!("## {}\n", branch_name));
-                }
-            } else {
-                result.push_str(&format!("## {}\n", branch_name));
-            }
-        } else {
-            result.push_str("## (no branch)\n");
-        }
-
-        // Add the file status entries
-        let status_output = self.get_status_porcelain(repo)?;
-        result.push_str(&status_output);
-
-        Ok(result)
-    }
-
-    fn check_remote_branch(&self, repo: &Repository, remote: &str, branch: &str) -> Result<bool> {
-        // Try to find the remote reference
-        let remote_ref = format!("refs/remotes/{}/{}", remote, branch);
-        match repo.find_reference(&remote_ref) {
-            Ok(_) => Ok(true),
-            Err(e) if e.code() == git2::ErrorCode::NotFound => Ok(false),
-            Err(e) => Err(anyhow!("Failed to check remote branch: {}", e)),
-        }
     }
 
     fn get_last_commit_timestamp(&self, repo: &Repository, branch: &str) -> Result<i64> {
@@ -463,17 +392,6 @@ pub enum LocalStatus {
     Missing,
 }
 
-#[derive(Debug, Clone)]
-pub enum RemoteStatus {
-    UpToDate,
-    Ahead(u32),
-    Behind(u32),
-    Diverged(u32, u32), // ahead, behind
-    NotPushed,
-    NotTracking,
-    NoRemote,
-}
-
 impl Display for LocalStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let text = match self {
@@ -481,21 +399,6 @@ impl Display for LocalStatus {
             LocalStatus::Dirty => "Dirty",
             LocalStatus::Staged => "Staged",
             LocalStatus::Missing => "Missing",
-        };
-        write!(f, "{}", text)
-    }
-}
-
-impl Display for RemoteStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let text = match self {
-            RemoteStatus::UpToDate => "Up to date".to_string(),
-            RemoteStatus::Ahead(n) => format!("Ahead {}", n),
-            RemoteStatus::Behind(n) => format!("Behind {}", n),
-            RemoteStatus::Diverged(ahead, behind) => format!("Diverged +{} -{}", ahead, behind),
-            RemoteStatus::NotPushed => "Not pushed".to_string(),
-            RemoteStatus::NotTracking => "Not tracking".to_string(),
-            RemoteStatus::NoRemote => "No remote".to_string(),
         };
         write!(f, "{}", text)
     }
@@ -587,78 +490,6 @@ impl<T: GitClient> GitRepository<T> {
             LocalStatus::Staged
         } else {
             LocalStatus::Dirty
-        }
-    }
-
-    pub fn get_remote_status(
-        &self,
-        worktree_path: &str,
-        branch_name: &str,
-    ) -> Result<RemoteStatus> {
-        if !Path::new(worktree_path).exists() {
-            return Ok(RemoteStatus::NoRemote);
-        }
-
-        let worktree_repo = Repository::open(worktree_path)
-            .map_err(|_| anyhow!("Failed to open worktree repository"))?;
-        let status_output = match self.git_client.get_status_branch(&worktree_repo) {
-            Ok(output) => output,
-            Err(_) => return Ok(RemoteStatus::NoRemote),
-        };
-
-        let first_line = status_output.lines().next().unwrap_or("");
-
-        if !first_line.starts_with("## ") {
-            return Ok(RemoteStatus::NoRemote);
-        }
-
-        let branch_info = &first_line[3..]; // Remove "## "
-
-        if !branch_info.contains("...") {
-            // No upstream tracking - check if branch exists on remote
-            match self
-                .git_client
-                .check_remote_branch(&worktree_repo, "origin", branch_name)
-            {
-                Ok(true) => Ok(RemoteStatus::NotTracking),
-                Ok(false) | Err(_) => Ok(RemoteStatus::NotPushed),
-            }
-        } else {
-            Ok(Self::parse_remote_status(branch_info))
-        }
-    }
-
-    /// Pure function to parse remote status from git status branch line
-    fn parse_remote_status(branch_info: &str) -> RemoteStatus {
-        // Parse ahead/behind from status output
-        if let Some(bracket_start) = branch_info.find('[') {
-            let bracket_content = &branch_info[bracket_start + 1..];
-            if let Some(bracket_end) = bracket_content.find(']') {
-                let tracking_info = &bracket_content[..bracket_end];
-
-                let mut ahead = 0u32;
-                let mut behind = 0u32;
-
-                for part in tracking_info.split(", ") {
-                    if let Some(ahead_str) = part.strip_prefix("ahead ") {
-                        ahead = ahead_str.parse().unwrap_or(0);
-                    } else if let Some(behind_str) = part.strip_prefix("behind ") {
-                        behind = behind_str.parse().unwrap_or(0);
-                    }
-                }
-
-                match (ahead, behind) {
-                    (0, 0) => RemoteStatus::UpToDate,
-                    (a, 0) if a > 0 => RemoteStatus::Ahead(a),
-                    (0, b) if b > 0 => RemoteStatus::Behind(b),
-                    (a, b) if a > 0 && b > 0 => RemoteStatus::Diverged(a, b),
-                    _ => RemoteStatus::UpToDate,
-                }
-            } else {
-                RemoteStatus::UpToDate
-            }
-        } else {
-            RemoteStatus::UpToDate
         }
     }
 

@@ -46,26 +46,6 @@ pub struct ListCommand {
     #[arg(long)]
     missing: bool,
 
-    // Remote status filters
-    /// Show only branches that are ahead of their remote
-    #[arg(long)]
-    ahead: bool,
-    /// Show only branches that are behind their remote
-    #[arg(long)]
-    behind: bool,
-    /// Show only branches that have diverged from their remote
-    #[arg(long)]
-    diverged: bool,
-    /// Show only branches that haven't been pushed to remote
-    #[arg(long)]
-    not_pushed: bool,
-    /// Show only branches that exist on remote but aren't tracking
-    #[arg(long)]
-    not_tracking: bool,
-    /// Show only branches that are up to date with their remote
-    #[arg(long)]
-    up_to_date: bool,
-
     // Age filters
     /// Show only branches older than the specified time (e.g., 30, 30d, 1w, 2m)
     #[arg(long)]
@@ -107,26 +87,6 @@ impl ListCommand {
         }
         if self.missing {
             filter.missing = Some(true);
-        }
-
-        // Remote status filters
-        if self.ahead {
-            filter.ahead = Some(true);
-        }
-        if self.behind {
-            filter.behind = Some(true);
-        }
-        if self.diverged {
-            filter.diverged = Some(true);
-        }
-        if self.not_pushed {
-            filter.not_pushed = Some(true);
-        }
-        if self.not_tracking {
-            filter.not_tracking = Some(true);
-        }
-        if self.up_to_date {
-            filter.up_to_date = Some(true);
         }
 
         // Age filters
@@ -206,12 +166,6 @@ impl ListCommand {
             || self.clean
             || self.staged
             || self.missing
-            || self.ahead
-            || self.behind
-            || self.diverged
-            || self.not_pushed
-            || self.not_tracking
-            || self.up_to_date
             || self.older_than.is_some()
             || self.newer_than.is_some()
     }
@@ -246,24 +200,6 @@ impl ListCommand {
         }
         if self.missing {
             filters.push("missing".to_string());
-        }
-        if self.ahead {
-            filters.push("ahead".to_string());
-        }
-        if self.behind {
-            filters.push("behind".to_string());
-        }
-        if self.diverged {
-            filters.push("diverged".to_string());
-        }
-        if self.not_pushed {
-            filters.push("not-pushed".to_string());
-        }
-        if self.not_tracking {
-            filters.push("not-tracking".to_string());
-        }
-        if self.up_to_date {
-            filters.push("up-to-date".to_string());
         }
 
         if let Some(age) = &self.older_than {
@@ -339,7 +275,6 @@ impl ListCommand {
         for worktree in worktrees {
             // Get all status information
             let local_status = repo.get_local_status(&worktree.path)?;
-            let remote_status = repo.get_remote_status(&worktree.path, &worktree.branch)?;
             let commit_timestamp = repo
                 .get_last_commit_timestamp(&worktree.path, &worktree.branch)
                 .unwrap_or(0);
@@ -352,7 +287,6 @@ impl ListCommand {
                 branch: worktree.branch.clone(),
                 status: WorktreeStatus {
                     local_status,
-                    remote_status,
                     commit_timestamp,
                     directory_mtime,
                     commit_summary,
