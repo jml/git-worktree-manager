@@ -153,6 +153,7 @@ impl SwitchCommand {
                     commit_timestamp: 0,
                     directory_mtime: 0,
                     commit_summary: "<placeholder>".to_string(),
+                    pr_status: None,
                 },
             })
             .collect();

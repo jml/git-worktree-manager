@@ -23,6 +23,8 @@ pub trait GitClient {
         reuse_existing_branch: bool,
     ) -> Result<()>;
     fn fetch_remotes(&self, repo: &Repository) -> Result<()>;
+    fn pull_main(&self, repo: &Repository) -> Result<()>;
+    fn get_worktree_birth_time(&self, path: &str) -> Result<Option<i64>>;
 }
 
 /// Default implementation using system git command
@@ -376,6 +378,125 @@ impl GitClient for SystemGitClient {
 
         Ok(())
     }
+
+    fn pull_main(&self, repo: &Repository) -> Result<()> {
+        // First, find the main worktree by listing all worktrees
+        let worktrees = repo
+            .worktrees()
+            .map_err(|e| anyhow!("Failed to list worktrees: {}", e))?;
+
+        let mut main_worktree_path: Option<std::path::PathBuf> = None;
+
+        // Look for a worktree on the main branch
+        for worktree_name in worktrees.iter().flatten() {
+            if let Ok(worktree) = repo.find_worktree(worktree_name) {
+                let path = worktree.path();
+                if path.exists() {
+                    // Try to open the worktree repository and check its branch
+                    if let Ok(wt_repo) = Repository::open(path)
+                        && let Ok(head) = wt_repo.head()
+                        && let Some(branch_name) = head.shorthand()
+                        && branch_name == "main"
+                    {
+                        main_worktree_path = Some(path.to_path_buf());
+                        break;
+                    }
+                }
+            }
+        }
+
+        let main_worktree_path =
+            main_worktree_path.ok_or_else(|| anyhow!("No main worktree found"))?;
+
+        // Open the main worktree repository
+        let main_repo = Repository::open(&main_worktree_path)
+            .map_err(|e| anyhow!("Failed to open main worktree: {}", e))?;
+
+        // Find the upstream/main or origin/main branch (prefer upstream)
+        let remote_main_ref = repo
+            .find_reference("refs/remotes/upstream/main")
+            .or_else(|_| repo.find_reference("refs/remotes/origin/main"))
+            .map_err(|e| anyhow!("Failed to find upstream/main or origin/main: {}", e))?;
+
+        let remote_main_commit = remote_main_ref
+            .peel_to_commit()
+            .map_err(|e| anyhow!("Failed to resolve remote main commit: {}", e))?;
+
+        // Fast-forward main to remote/main
+        let main_ref = repo
+            .find_reference("refs/heads/main")
+            .map_err(|e| anyhow!("Failed to find main branch: {}", e))?;
+
+        let main_commit = main_ref
+            .peel_to_commit()
+            .map_err(|e| anyhow!("Failed to resolve main commit: {}", e))?;
+
+        // Check if fast-forward is possible
+        let (ahead, behind) = repo
+            .graph_ahead_behind(main_commit.id(), remote_main_commit.id())
+            .map_err(|e| anyhow!("Failed to calculate ahead/behind: {}", e))?;
+
+        if behind == 0 {
+            // Already up to date
+            return Ok(());
+        }
+
+        if ahead > 0 {
+            return Err(anyhow!(
+                "Cannot fast-forward: main is {} commits ahead of remote main",
+                ahead
+            ));
+        }
+
+        // Update the main branch reference to point to remote/main
+        repo.reference(
+            "refs/heads/main",
+            remote_main_commit.id(),
+            true,
+            "gwm sync: fast-forward main to remote main",
+        )
+        .map_err(|e| anyhow!("Failed to update main reference: {}", e))?;
+
+        // Update the working directory of the main worktree to match the new commit
+        main_repo
+            .checkout_head(Some(CheckoutBuilder::new().force()))
+            .map_err(|e| anyhow!("Failed to checkout updated main: {}", e))?;
+
+        Ok(())
+    }
+
+    fn get_worktree_birth_time(&self, path: &str) -> Result<Option<i64>> {
+        let metadata = fs::metadata(path)?;
+
+        // Try to get birth time (creation time) - only available on some platforms
+        #[cfg(target_os = "macos")]
+        {
+            use std::os::macos::fs::MetadataExt;
+            let birth_time = metadata.st_birthtime();
+            if birth_time > 0 {
+                return Ok(Some(birth_time));
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Linux doesn't reliably support birth time, return None
+            return Ok(None);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(created) = metadata.created() {
+                let timestamp = created
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|e| anyhow!("Failed to get timestamp: {}", e))?;
+                return Ok(Some(timestamp.as_secs() as i64));
+            }
+        }
+
+        // Fallback: return None if birth time is not available
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -541,5 +662,25 @@ impl<T: GitClient> GitRepository<T> {
 
     pub fn fetch_remotes(&self) -> Result<()> {
         self.git_client.fetch_remotes(&self.repository)
+    }
+
+    pub fn pull_main(&self) -> Result<()> {
+        self.git_client.pull_main(&self.repository)
+    }
+
+    pub fn get_worktree_birth_time(&self, worktree_path: &str) -> Result<Option<i64>> {
+        self.git_client.get_worktree_birth_time(worktree_path)
+    }
+
+    pub fn get_upstream_remote_url(&self) -> Result<Option<String>> {
+        // Try upstream first, then origin
+        for remote_name in &["upstream", "origin"] {
+            if let Ok(remote) = self.repository.find_remote(remote_name)
+                && let Some(url) = remote.url()
+            {
+                return Ok(Some(url.to_string()));
+            }
+        }
+        Ok(None)
     }
 }

@@ -57,7 +57,7 @@ impl RemoveCommand {
             path: repo_result.path.clone(),
             worktrees: vec![worktree_result.clone()],
         };
-        let table_output = table::create_table(&[target_repo], true);
+        let table_output = table::create_table(&[target_repo], true, false);
         println!("{}", table_output);
         println!();
 
@@ -181,6 +181,7 @@ impl RemoveCommand {
                     commit_timestamp: 0,                          // Placeholder
                     directory_mtime: 0,                           // Placeholder
                     commit_summary: "<placeholder>".to_string(),  // Placeholder
+                    pr_status: None,                              // No PR status for remove command
                 },
             });
         }

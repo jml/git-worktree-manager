@@ -211,6 +211,7 @@ impl AddCommand {
                         commit_timestamp: 0,                          // Placeholder
                         directory_mtime: 0,                           // Placeholder
                         commit_summary: "<placeholder>".to_string(),  // Placeholder
+                        pr_status: None, // No PR status for add command
                     },
                 }
             })

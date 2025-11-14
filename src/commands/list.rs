@@ -1,11 +1,15 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Args;
 use futures::future::try_join_all;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::{RepoResult, WorktreeAnalyzer, WorktreeFilter, WorktreeResult, WorktreeStatus};
+use crate::core::{
+    PrStatus, RepoResult, WorktreeAnalyzer, WorktreeFilter, WorktreeResult, WorktreeStatus,
+};
 use crate::git::{GitRepository, SystemGitClient};
+use crate::github;
 use crate::output::table;
 
 #[derive(Args)]
@@ -17,6 +21,9 @@ pub struct ListCommand {
     /// Disable emoji in status output
     #[arg(long)]
     no_emoji: bool,
+    /// Disable PR status fetching from GitHub
+    #[arg(long)]
+    no_pr_status: bool,
 
     // Preset filters
     /// Show only branches that are likely candidates for pruning (likely-merged, clean, older than 7 days)
@@ -112,7 +119,9 @@ impl ListCommand {
         let filter = self.build_filter()?;
 
         // Find all repositories
-        let repo_tasks = self.collect_repositories(search_path).await?;
+        let repo_tasks = self
+            .collect_repositories(search_path, !self.no_pr_status)
+            .await?;
 
         // Process repositories in parallel
         let repo_task_results = try_join_all(repo_tasks).await?;
@@ -136,7 +145,8 @@ impl ListCommand {
 
         // Display results as table
         let use_emoji = !self.no_emoji;
-        let table_output = table::create_table(&filtered_results, use_emoji);
+        let show_pr_status = !self.no_pr_status;
+        let table_output = table::create_table(&filtered_results, use_emoji, show_pr_status);
         println!("{}", table_output);
 
         // Simple summary
@@ -215,6 +225,7 @@ impl ListCommand {
     async fn collect_repositories(
         &self,
         search_path: &str,
+        fetch_pr_status: bool,
     ) -> Result<Vec<tokio::task::JoinHandle<Result<RepoResult>>>> {
         let mut repo_tasks = Vec::new();
         let entries = fs::read_dir(search_path)?;
@@ -234,14 +245,17 @@ impl ListCommand {
 
             let path_str = path.to_str().unwrap().to_string();
 
-            let task = tokio::spawn(async move { Self::process_repository(path_str).await });
+            let task =
+                tokio::spawn(
+                    async move { Self::process_repository(path_str, fetch_pr_status).await },
+                );
             repo_tasks.push(task);
         }
 
         Ok(repo_tasks)
     }
 
-    async fn process_repository(repo_path: String) -> Result<RepoResult> {
+    async fn process_repository(repo_path: String, fetch_pr_status: bool) -> Result<RepoResult> {
         let repo_name = Path::new(&repo_path)
             .file_name()
             .and_then(|n| n.to_str())
@@ -270,6 +284,13 @@ impl ListCommand {
             });
         }
 
+        // Fetch PR data if requested
+        let pr_matches: HashMap<String, PrStatus> = if fetch_pr_status {
+            Self::fetch_pr_data_for_repo(&repo_path, &worktrees).await?
+        } else {
+            HashMap::new()
+        };
+
         // Process all worktrees for this repo
         let mut worktree_results = Vec::new();
         for worktree in worktrees {
@@ -283,6 +304,9 @@ impl ListCommand {
                 .get_commit_summary(&worktree.path, &worktree.branch)
                 .unwrap_or_else(|_| "<no commit>".to_string());
 
+            // Get PR status for this branch
+            let pr_status = pr_matches.get(&worktree.branch).cloned();
+
             worktree_results.push(WorktreeResult {
                 branch: worktree.branch.clone(),
                 status: WorktreeStatus {
@@ -290,6 +314,7 @@ impl ListCommand {
                     commit_timestamp,
                     directory_mtime,
                     commit_summary,
+                    pr_status,
                 },
             });
         }
@@ -299,5 +324,83 @@ impl ListCommand {
             path: PathBuf::from(&repo_path),
             worktrees: worktree_results,
         })
+    }
+
+    async fn fetch_pr_data_for_repo(
+        repo_path: &str,
+        worktrees: &[crate::git::WorktreeInfo],
+    ) -> Result<HashMap<String, PrStatus>> {
+        // Validate GITHUB_TOKEN is present
+        std::env::var("GITHUB_TOKEN")
+            .map_err(|_| anyhow!("GITHUB_TOKEN environment variable not set"))?;
+
+        // Create a new repo instance for this async context
+        let repo = GitRepository::new(repo_path, SystemGitClient)?;
+
+        // Get upstream remote URL
+        let remote_url = repo
+            .get_upstream_remote_url()?
+            .ok_or_else(|| anyhow!("No upstream or origin remote found"))?;
+
+        // Parse GitHub repo from URL
+        let github_repo = github::parse_github_url(&remote_url)?;
+
+        eprintln!(
+            "[PR Fetch] Processing repository: {} ({})",
+            Path::new(repo_path).file_name().unwrap().to_string_lossy(),
+            remote_url
+        );
+
+        // Determine the earliest worktree creation time
+        let since_timestamp = Self::get_earliest_worktree_time(repo_path, worktrees).await?;
+
+        let since_date = chrono::DateTime::from_timestamp(since_timestamp, 0)
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        eprintln!("[PR Fetch] Looking for PRs created since: {}", since_date);
+
+        // Create GitHub client
+        let github_client = octocrab::Octocrab::builder()
+            .personal_token(std::env::var("GITHUB_TOKEN")?)
+            .build()?;
+
+        // Fetch PRs for this repository
+        let prs = github::fetch_prs_for_repo(&github_client, &github_repo, since_timestamp).await?;
+
+        // Extract branch names from worktrees
+        let branch_names: Vec<String> = worktrees.iter().map(|wt| wt.branch.clone()).collect();
+
+        // Match worktrees to PRs
+        let matches = github::match_worktrees_to_prs(&branch_names, &prs);
+        eprintln!("[PR Fetch] Matched {} worktrees to PRs\n", matches.len());
+
+        Ok(matches)
+    }
+
+    async fn get_earliest_worktree_time(
+        repo_path: &str,
+        worktrees: &[crate::git::WorktreeInfo],
+    ) -> Result<i64> {
+        let repo = GitRepository::new(repo_path, SystemGitClient)?;
+        let mut earliest_time: Option<i64> = None;
+
+        for worktree in worktrees {
+            if let Ok(Some(birth_time)) = repo.get_worktree_birth_time(&worktree.path) {
+                earliest_time = Some(match earliest_time {
+                    None => birth_time,
+                    Some(current) => current.min(birth_time),
+                });
+            }
+        }
+
+        // If we have a birth time, use it; otherwise fall back to 1 week ago
+        Ok(earliest_time.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                - (7 * 24 * 60 * 60)
+        }))
     }
 }

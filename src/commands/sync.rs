@@ -105,10 +105,21 @@ impl SyncCommand {
         repo_name: String,
     ) -> Result<String, (String, String)> {
         match GitRepository::new(&repo_path, SystemGitClient) {
-            Ok(repo) => match repo.fetch_remotes() {
-                Ok(_) => Ok(repo_name),
-                Err(e) => Err((repo_name, e.to_string())),
-            },
+            Ok(repo) => {
+                // First fetch all remotes
+                if let Err(e) = repo.fetch_remotes() {
+                    return Err((repo_name, e.to_string()));
+                }
+
+                // Then pull main branch if we're in the main worktree
+                if let Err(e) = repo.pull_main() {
+                    // If pull_main fails (e.g., not on main branch), just log it but don't fail the sync
+                    // This allows sync to work for both main worktrees and feature worktrees
+                    eprintln!("  Note: Could not pull main for {}: {}", repo_name, e);
+                }
+
+                Ok(repo_name)
+            }
             Err(e) => Err((repo_name, e.to_string())),
         }
     }

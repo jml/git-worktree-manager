@@ -1,8 +1,29 @@
 use crate::git::LocalStatus;
+use std::fmt::Display;
 use std::path::PathBuf;
 
 /// Pure functional core for worktree status computation
 /// This module contains no I/O operations - only data transformations and business logic
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum PrStatus {
+    Open,
+    Draft,
+    Merged,
+    Closed,
+}
+
+impl Display for PrStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            PrStatus::Open => "Open",
+            PrStatus::Draft => "Draft",
+            PrStatus::Merged => "Merged",
+            PrStatus::Closed => "Closed",
+        };
+        write!(f, "{}", text)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct WorktreeStatus {
@@ -11,6 +32,7 @@ pub struct WorktreeStatus {
     #[allow(dead_code)]
     pub directory_mtime: i64,
     pub commit_summary: String,
+    pub pr_status: Option<PrStatus>,
 }
 
 #[derive(Debug, Clone)]

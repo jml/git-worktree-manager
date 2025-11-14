@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 mod commands;
 mod core;
 mod git;
+mod github;
 mod output;
 
 use commands::add::AddCommand;
