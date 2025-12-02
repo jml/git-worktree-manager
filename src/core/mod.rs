@@ -116,6 +116,7 @@ pub struct WorktreeFilter {
 
     // Preset indicators
     pub is_needs_attention: bool,
+    pub is_gc_candidate: bool,
 }
 
 impl WorktreeFilter {
@@ -196,11 +197,25 @@ impl WorktreeFilter {
         }
     }
 
+    /// Create preset for garbage collection candidates
+    /// Worktrees that are (Clean OR Missing) AND Merged
+    pub fn gc_candidates() -> Self {
+        Self {
+            is_gc_candidate: true,
+            ..Default::default()
+        }
+    }
+
     /// Pure function to check if a worktree matches the filter criteria
     pub fn matches(&self, worktree: &WorktreeResult, current_timestamp: i64) -> bool {
         // Handle special preset logic
         if self.is_needs_attention {
             return self.matches_needs_attention(worktree);
+        }
+
+        // Handle gc candidates preset
+        if self.is_gc_candidate {
+            return self.matches_gc_candidate(worktree);
         }
 
         // Check local status filters
@@ -218,6 +233,19 @@ impl WorktreeFilter {
 
     fn matches_needs_attention(&self, worktree: &WorktreeResult) -> bool {
         matches!(worktree.status.local_status, LocalStatus::Missing)
+    }
+
+    fn matches_gc_candidate(&self, worktree: &WorktreeResult) -> bool {
+        // Must be Clean OR Missing
+        let status_ok = matches!(
+            worktree.status.local_status,
+            LocalStatus::Clean | LocalStatus::Missing
+        );
+
+        // Must be Merged
+        let pr_ok = matches!(worktree.status.pr_status, Some(PrStatus::Merged));
+
+        status_ok && pr_ok
     }
 
     fn matches_local_status(&self, status: &LocalStatus) -> bool {
@@ -291,5 +319,82 @@ impl WorktreeAnalyzer {
         }
 
         filtered_results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_worktree(
+        local_status: LocalStatus,
+        pr_status: Option<PrStatus>,
+    ) -> WorktreeResult {
+        WorktreeResult {
+            branch: "test-branch".to_string(),
+            status: WorktreeStatus {
+                local_status,
+                commit_timestamp: 0,
+                directory_mtime: 0,
+                commit_summary: "test commit".to_string(),
+                pr_status,
+            },
+        }
+    }
+
+    #[test]
+    fn gc_candidates_filter_matches_clean_and_merged() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Clean, Some(PrStatus::Merged));
+        assert!(filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_matches_missing_and_merged() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Missing, Some(PrStatus::Merged));
+        assert!(filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_dirty_with_merged() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Dirty, Some(PrStatus::Merged));
+        assert!(!filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_staged_with_merged() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Staged, Some(PrStatus::Merged));
+        assert!(!filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_clean_with_open_pr() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Clean, Some(PrStatus::Open));
+        assert!(!filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_clean_with_draft_pr() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Clean, Some(PrStatus::Draft));
+        assert!(!filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_clean_with_closed_pr() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Clean, Some(PrStatus::Closed));
+        assert!(!filter.matches(&worktree, 0));
+    }
+
+    #[test]
+    fn gc_candidates_filter_rejects_clean_with_no_pr() {
+        let filter = WorktreeFilter::gc_candidates();
+        let worktree = create_test_worktree(LocalStatus::Clean, None);
+        assert!(!filter.matches(&worktree, 0));
     }
 }

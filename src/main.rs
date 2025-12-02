@@ -11,6 +11,7 @@ use commands::add::AddCommand;
 use commands::complete_branches::CompleteBranchesCommand;
 use commands::complete_repos::CompleteReposCommand;
 use commands::completion::CompletionCommand;
+use commands::gc::GcCommand;
 use commands::list::ListCommand;
 use commands::remove::RemoveCommand;
 use commands::switch::SwitchCommand;
@@ -39,6 +40,9 @@ pub enum Commands {
     /// Remove a specific worktree branch
     #[command(name = "remove")]
     Remove(RemoveCommand),
+    /// Remove worktrees that are clean/missing and have merged PRs
+    #[command(name = "gc")]
+    Gc(GcCommand),
     /// Switch to a worktree directory
     #[command(name = "switch")]
     Switch(SwitchCommand),
@@ -64,6 +68,7 @@ async fn main() -> Result<()> {
         Some(Commands::List(cmd)) => cmd.execute().await,
         Some(Commands::Add(cmd)) => cmd.execute().await,
         Some(Commands::Remove(cmd)) => cmd.execute().await,
+        Some(Commands::Gc(cmd)) => cmd.execute().await,
         Some(Commands::Switch(cmd)) => cmd.execute().await,
         Some(Commands::Sync(cmd)) => cmd.execute().await,
         Some(Commands::Completion(cmd)) => cmd.execute().await,

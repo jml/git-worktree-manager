@@ -2,6 +2,7 @@ pub mod add;
 pub mod complete_branches;
 pub mod complete_repos;
 pub mod completion;
+pub mod gc;
 pub mod list;
 pub mod remove;
 pub mod switch;
