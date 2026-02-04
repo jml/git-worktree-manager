@@ -31,10 +31,6 @@ pub struct AddCommand {
     /// Reuse existing branch instead of failing when branch already exists
     #[arg(long)]
     reuse: bool,
-
-    /// Don't change to the worktree directory after creation
-    #[arg(long)]
-    no_switch: bool,
 }
 
 impl AddCommand {
@@ -113,12 +109,6 @@ impl AddCommand {
             "✅ Successfully created worktree {}/{}",
             self.repo, self.branch
         );
-
-        // Change to the worktree directory unless disabled
-        if !self.no_switch {
-            std::env::set_current_dir(&worktree_path)?;
-            println!("📁 Changed to {}", worktree_path.display());
-        }
 
         Ok(())
     }

@@ -25,6 +25,10 @@ pub struct RemoveCommand {
     /// Show what would be removed without actually removing anything
     #[arg(long)]
     dry_run: bool,
+
+    /// Skip confirmation prompt
+    #[arg(short = 'f', long)]
+    force: bool,
 }
 
 impl RemoveCommand {
@@ -69,16 +73,18 @@ impl RemoveCommand {
             return Ok(());
         }
 
-        // Ask for confirmation
-        print!("❓ Remove worktree {}/{}? [y/N]: ", self.repo, self.branch);
-        io::stdout().flush()?;
+        // Ask for confirmation unless --force is set
+        if !self.force {
+            print!("❓ Remove worktree {}/{}? [y/N]: ", self.repo, self.branch);
+            io::stdout().flush()?;
 
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
 
-        if !input.trim().to_lowercase().starts_with('y') {
-            println!("Cancelled.");
-            return Ok(());
+            if !input.trim().to_lowercase().starts_with('y') {
+                println!("Cancelled.");
+                return Ok(());
+            }
         }
 
         // Perform the removal

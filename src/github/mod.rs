@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use octocrab::Octocrab;
 use regex::Regex;
 use std::collections::HashMap;
@@ -84,7 +84,8 @@ pub async fn fetch_prs_for_repo(
             .per_page(100)
             .page(page)
             .send()
-            .await?;
+            .await
+            .with_context(|| format!("Failed to search PRs for {}/{}", repo.owner, repo.repo))?;
 
         let page_size = results.items.len();
 
@@ -111,7 +112,13 @@ pub async fn fetch_prs_for_repo(
                 let pr = github_client
                     .pulls(&repo.owner, &repo.repo)
                     .get(pr_number)
-                    .await?;
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "Failed to fetch PR #{} for {}/{}",
+                            pr_number, repo.owner, repo.repo
+                        )
+                    })?;
 
                 // Determine PR status
                 let status = if pr.merged_at.is_some() {
