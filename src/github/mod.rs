@@ -53,8 +53,6 @@ pub async fn fetch_prs_for_repo(
     repo: &GitHubRepo,
     since_timestamp: i64,
 ) -> Result<Vec<PrInfo>> {
-    let start_time = std::time::Instant::now();
-
     // Convert timestamp to date string for search query
     let since_date = chrono::DateTime::from_timestamp(since_timestamp, 0)
         .ok_or_else(|| anyhow!("Invalid timestamp: {}", since_timestamp))?;
@@ -66,18 +64,10 @@ pub async fn fetch_prs_for_repo(
         repo.owner, repo.repo, date_string
     );
 
-    eprintln!("[GitHub API] Searching PRs with query: {}", query);
-
     let mut page = 1u32;
     let mut all_prs = Vec::new();
 
     loop {
-        eprintln!(
-            "[GitHub API] GET /search/issues?q={}&per_page=100&page={}",
-            urlencoding::encode(&query),
-            page
-        );
-
         let results = github_client
             .search()
             .issues_and_pull_requests(&query)
@@ -91,8 +81,6 @@ pub async fn fetch_prs_for_repo(
         if page_size == 0 {
             break;
         }
-
-        eprintln!("[GitHub API] Page {} returned {} results", page, page_size);
 
         let has_more_pages = page_size >= 100;
 
@@ -138,15 +126,6 @@ pub async fn fetch_prs_for_repo(
 
         page += 1;
     }
-
-    let elapsed = start_time.elapsed();
-    eprintln!(
-        "[GitHub API] Search completed in {:?}, found {} PRs for {}/{}",
-        elapsed,
-        all_prs.len(),
-        repo.owner,
-        repo.repo
-    );
 
     Ok(all_prs)
 }

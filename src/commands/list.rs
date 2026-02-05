@@ -345,20 +345,8 @@ impl ListCommand {
         // Parse GitHub repo from URL
         let github_repo = github::parse_github_url(&remote_url)?;
 
-        eprintln!(
-            "[PR Fetch] Processing repository: {} ({})",
-            Path::new(repo_path).file_name().unwrap().to_string_lossy(),
-            remote_url
-        );
-
         // Determine the earliest worktree creation time
         let since_timestamp = Self::get_earliest_worktree_time(repo_path, worktrees).await?;
-
-        let since_date = chrono::DateTime::from_timestamp(since_timestamp, 0)
-            .map(|dt| dt.format("%Y-%m-%d").to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        eprintln!("[PR Fetch] Looking for PRs created since: {}", since_date);
 
         // Create GitHub client
         let github_client = octocrab::Octocrab::builder()
@@ -373,7 +361,6 @@ impl ListCommand {
 
         // Match worktrees to PRs
         let matches = github::match_worktrees_to_prs(&branch_names, &prs);
-        eprintln!("[PR Fetch] Matched {} worktrees to PRs\n", matches.len());
 
         Ok(matches)
     }
