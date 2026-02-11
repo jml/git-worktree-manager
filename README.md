@@ -1,7 +1,7 @@
 # git-worktree-manager
 
 An opinionated git worktree management tool.
-Please don't use this.
+Please don't use this. Seriously.
 
 ## Features
 
